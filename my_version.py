@@ -1,3 +1,4 @@
+#%%
 # import os
 # import netCDF4
 # import csv
@@ -5,8 +6,9 @@
 # import pandas as pd
 # from matplotlib.animation import FuncAnimation
 # import matplotlib as mpl
-import scipy
+from scipy.io import loadmat
 from scipy.interpolate import RectBivariateSpline
+import scipy.integrate as integrate
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.colors import LogNorm
@@ -23,7 +25,7 @@ except: # defining some vars in a global scope
     once       = False
     twice      = 1
     source_dir = 'C:/Users/shrut/OneDrive - Imperial College London/Documents/Finding Research/UKRI_STFC_CLF/'
-    fmat       = scipy.io.loadmat(  # read a MATLAB file
+    fmat       = loadmat(  # read a MATLAB file
         source_dir + 'for_shrut_250715/dppfilter_06_60_8col.mat',
         struct_as_record=False,#convert MATLAB structures into Python sytle classes with attributes
         squeeze_me=True) # squeeze out singleton dimensions like 1x1 arrays
@@ -87,7 +89,7 @@ def create_2D_grids(KesslerParms, resolution_fac=1):
     nx             = KesslerParms.fftCells_x * resolution_fac # Number of pixels in the x-direction in the FFT grid (simulated near-field image)
     dx             = KesslerParms.nfPixSize_x / resolution_fac # Size of each pixel in x-direction at the near-field plane (where FFT is evaluated); I guess in meters?
     ny             = KesslerParms.fftCells_y * resolution_fac 
-    dy             = KesslerParms.nfPixSize_y / resolution_fac # 0.0003125 
+    dy             = KesslerParms.nfPixSize_y / resolution_fac # 0.0003125 (meters I guess?)
     x1d          = np.linspace(-1*nx/2,nx/2,nx) * dx
     y1d          = np.linspace(-1*ny/2,ny/2,ny) * dy
     x,y          = np.meshgrid(x1d,y1d,indexing='ij')
@@ -174,15 +176,34 @@ def make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff, dpp_phase, int
 
     plt.tight_layout()
     return fig
-def normalize_2D_array(data_array, x_range, y_range):
+def normalize_2D_array(data_array, x_range, y_range, x_mesh, y_mesh, use_scipy=False):
     """"
     Uses integration to find normalizing factor for a 2D area by taking area under the graph. 
     """
-    dx = x_range[1] - x_range[0]
-    dy = y_range[1] - y_range[0]
-
-    normalizing_factor = np.sum(data_array) * dx * dy
+    if use_scipy: # Integrate over y (axis=1), then over x (axis=0)
+        integral_wrt_y = integrate.simpson(data_array, y_mesh, axis=1)
+        normalizing_factor = integrate.simpson(integral_wrt_y, x_mesh[:,0])
+    else:
+        dx = x_range[1] - x_range[0]
+        dy = y_range[1] - y_range[0]
+        normalizing_factor = np.sum(data_array) * dx * dy
+    print(f'norm_fac: {normalizing_factor}\n')
     return data_array / normalizing_factor
+def expand_grid(mesh):
+    """
+    Take an input meshgrid and triple it's size by addings rows of zeros and columns of zeros to create a new meshgrid with the
+    data of the input mesh at the center, and zeros surrounding it.
+    """
+    expanded_mesh = mesh
+    rows, cols = len(mesh[:,0]), len(mesh[0,:])
+    y_zeros = np.zeros((rows, cols))
+    expanded_mesh = np.concatenate((y_zeros, expanded_mesh, y_zeros), axis=0)
+    rows_new = len(expanded_mesh[:,0])
+    x_zeros = np.zeros((rows_new, cols))
+    expanded_mesh = np.concatenate((x_zeros, expanded_mesh, x_zeros),axis=1)
+    print(f"{mesh}\n{expanded_mesh}")
+    return expanded_mesh
+#%%
 if __name__ == "__main__":
     #unit conversions
     m  = 1
@@ -196,8 +217,7 @@ if __name__ == "__main__":
     Lambda           = 0.351*um      #Omega wavelength: 3rd harmonic of a Nd:Glass laser
     res_fac          = 1             #Note: Higher resolution is required to resolve the far-field speckles
 
-    #if res_fac != res_fac_pr:
-    dpp_phase    = fmat['DPP_phase'] #The actual phase mask of the diffractive plate in radians over a 2D grid
+    dpp_phase    = fmat['DPP_phase']
     KesslerParms = fmat['KesslerParms']
     nx, dx, ny, dy, x1d, y1d, (x,y) = create_2D_grids(KesslerParms)
     #fine grid for high-res interpolation
@@ -213,38 +233,35 @@ if __name__ == "__main__":
     y1d          = y1d_ 
     x,y          = x_,y_
     res_fac_pr   = res_fac
-        
+#%%
+    # test =  [[1., 1., 1.],[1., 1., 1.],[1., 1., 1.]]
+    # expand_grid(np.array(test))
+#%%   
     int_beam_env     = np.exp(np.log(0.5)*(2*np.sqrt(x**2+y**2)/(25.8*cm))**24) #Beam intensity envelope at lens
-                            #where does this equation come from?
     area_nf          = dx * dy
-    pwr_beam_env     = int_beam_env * area_nf #power  envelope at lens
-    
+    normalize_2D_array(int_beam_env, x1d, y1d, x, y, use_scipy=True)
+#%%
     #old approach to normalizing:
-    pwr_beam_env_tot = np.sum(pwr_beam_env)
-    pwr_beam_env    *= beam_power / pwr_beam_env_tot    #W
-                    #what is happeneing here?
-    pwr_beam_env_tot = np.sum(pwr_beam_env)
-    
-    #new appraoch to normalizing:
-    # pwr_beam_env = normalize_2D_array(pwr_beam_env, x1d, y1d) * beam_power
+    pwr_beam_env     = int_beam_env * area_nf #power  envelope at lens
     # pwr_beam_env_tot = np.sum(pwr_beam_env)
+    # pwr_beam_env    *= beam_power / pwr_beam_env_tot    #W
+    # pwr_beam_env_tot = np.sum(pwr_beam_env)
+    
+    #new appraoch to normalizing: #normalize the intensity distribution (in space) and multiply that with beam power to get the power distribution
+    # pwr_beam_env = normalize_2D_array(pwr_beam_env, x1d, y1d, x, y, use_scipy=True) * beam_power
+    pwr_beam_env_tot = np.sum(pwr_beam_env)
 
     int_beam_env     = pwr_beam_env / area_nf #W/m^2
-                        #I guess this is the scaled intensity?
-    efield_beam_env  = int_beam_env**0.5    #V/m
-                       #proportionality relation. E field amplitude squared is proportional to intensity
+    efield_beam_env  = int_beam_env**0.5    #V/m    #proportionality relation. E field amplitude squared is proportional to intensity
     dpp              = np.exp(-1j * dpp_phase) #complex number of unit modulus. Product simply changes phase
     near_field       = efield_beam_env * dpp                   #apply DPP phase modulation
-    #does efield_beam_env store complex numbers? Is it a wave? What the heck happens when you give it a phase?!?!
     far_field        = np.fft.fftshift(np.fft.fft2(near_field))#2D fft then shift zero-frequency component to the center of the spectrum
-    int_ff           = np.abs(far_field)**2 #intensity isproportional to amplitude squared
+    int_ff           = np.abs(far_field)**2 #intensity is proportional to amplitude squared
 
-    #Not sure about the rationale for this spatial re-scaling
-    dxff, dyff = foc_len * Lambda / (dx * nx), foc_len * Lambda / (dy * ny) #both values are in meters
+    dxff, dyff = foc_len * Lambda / (dx * nx), foc_len * Lambda / (dy * ny) #both values are in meters. Limit of resolution due to diffraction
                     #dx * nx gives total simulated distance at near field in meters
-                    #foc_len / (dx * nx) is supposed to be f_number but it isn't
+                    #foc_len / (dx * nx) is supposed to be f_number (but it isn't == the global variable f_number)
                     #conversion from near field to far field
-    # dxff, dyff             = f_number * Lambda, f_number * Lambda
     xff1d            = np.linspace( -1 * nx / 2, nx / 2, nx) * dxff #this multiplication happens to convert from pixels to meters
     yff1d            = np.linspace(-1 * ny / 2, ny / 2, nx) * dyff
     xff,yff          = np.meshgrid(xff1d, yff1d, indexing='ij')
@@ -254,15 +271,12 @@ if __name__ == "__main__":
     area_ff          = dxff * dyff
     pwr_ff           = int_ff * area_ff
 
-    #The FFT isn't conserving energy (I'm not sure it should) so re-normlising here!
-    pwr_ff          *= beam_power/np.sum(pwr_ff)
-    pwr_ff_tot       = np.sum(pwr_ff)
-    int_ff           = pwr_ff / area_ff
-    # xff1d           /= area_ff_renorm**0.5
-    # yff1d           /= area_ff_renorm**0.5
-
-    #not manually renormalizing:
+    #The FFT isn't conserving energy (not sure it should) so re-normlising here!
+    # pwr_ff          *= beam_power/np.sum(pwr_ff)
     # pwr_ff_tot       = np.sum(pwr_ff)
+    # int_ff           = pwr_ff / area_ff
+    #not manually renormalizing:
+    pwr_ff_tot       = np.sum(pwr_ff)
 
     # del int_beam_env, pwr_beam_env, int_beam_env, efield_beam_env, dpp, near_field, far_field
 
