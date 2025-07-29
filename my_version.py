@@ -216,11 +216,13 @@ def expand_grid(meshes):
 		expanded_mesh = np.concatenate((x_zeros, expanded_mesh, x_zeros),axis=1)
 		expanded_meshes.append(expanded_mesh)
 	return expanded_meshes
-def quantify_nonuniformity(int_ideal, int_nonuniform, sigma_0):
+def quantify_nonuniformity(int_ideal, int_nonuniform, sigma_0=None):
 	rows, cols = np.shape(int_ideal)
 	rms_nonuniformity_array = np.abs(int_ideal - int_nonuniform) ** 2
 	sigma_rms = np.sqrt(np.sum(rms_nonuniformity_array) / (rows * cols))
-	nonuniformity_percentage = sigma_rms / sigma_0 * 100
+	nonuniformity_percentage = None
+	if sigma_0:
+		nonuniformity_percentage = sigma_rms / sigma_0 * 100
 	return nonuniformity_percentage, sigma_rms
 def apply_polarisation_smoothing(int_ff, shift=4, conversion_factor=1):
 	"""
@@ -234,29 +236,78 @@ def apply_polarisation_smoothing(int_ff, shift=4, conversion_factor=1):
 	polarised_offset[:,shift:] += int_ff[:,:-1*shift] / 2
 
 	return polarised_offset
-def intensity_plot(x, xff, y, yff, int_nf_raw, int_ff_raw, do_PS=False, do_LogNorm=False):
-  
-	non_uniformity_noPS, _ = quantify_nonuniformity(int_ideal=int_nf/cm2, int_nonuniform=int_ff/(um**2))
-	non_uniformity_PS, _ = quantify_nonuniformity(int_ideal=int_nf/cm2, int_nonuniform=int_ff_PS/(um**2))
-	print(f"nonuniformity without PS: {non_uniformity_noPS:3.2e}, with PS: {non_uniformity_PS:3.2e}")
-	return fig
-def intensity_phase_plots(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, dpp):
+def util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw):
 	x, dx 			= nf_x
 	xff, dxff 		= ff_x
 	y, dy 			= nf_y
 	yff, dyff 		= ff_y
 	peak_int_ideal 	= np.max(int_ff_ideal_raw)
 	int_ff_ideal 	= int_ff_ideal_raw / peak_int_ideal							#relative intensity found when we divide by peak intensity
+	peak_int_ideal *= (dx * dy) / (dxff * dyff)
+	int_ff = int_ff_raw / peak_int_ideal
 
-	int_ff 	= int_ff_raw
-	data 	= [int_ff_ideal, dpp, int_ff]
-	x_y 	= [(xff,yff), (x,y), (xff,yff)]
-	unit 	= [('um', um), ('cm', cm), ('um', um)]
-	fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(2*8,8))
+	return x, xff, y, yff, int_ff_ideal, int_ff
+def util_plt_one_column_or_row(data_arrays, plt_attributes, one_col=True):
+	if one_col:
+		fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(8,2*8))
+	else:
+		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*8,8)) 
+	for pos, data in enumerate(data_arrays):
+		x, y, data_array 														= data
+		plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, y_scale, varname 	= plt_attributes[pos]
+		if plot_type == 'img':
+			pcm		= ax[pos].pcolormesh(x / x_scale, y / y_scale, data_array, norm=norm, cmap='rainbow')
+			cb 		= fig.colorbar(pcm, ax=ax[pos])
+			cb		.set_label(varname)
+		if plot_type == 'line':
+			line1, line2, line3 = data_array
+			ax[pos].plot(x, line1, linestyle='--', color='red', label='Ideal Lineshape')
+			ax[pos].plot(x, line2, color='black', label='Without PS')
+			ax[pos].plot(x, line3, color='grey', label='With PS')
+			ax[pos].legend()
+			# print(data_array)
+		ax[pos]	.set_xlabel(xlabel)
+		ax[pos]	.set_ylabel(ylabel)
+		if xlim:
+			ax[pos]	.set_xlim(-1*xlim, xlim)
+		if ylim:	
+			ax[pos]	.set_ylim(-1*ylim, ylim)
+	return fig
+def intensity_plot(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, do_PS=False, do_LogNorm=False):
+	"""
+	Make plots of ff intensity distribution with different levels of smoothing applied.
+	"""
+	data_to_plot = []
+	plt_attributes = [] # (plot_type, xlabel, ylabel, norm, xlim, ylim, xscale, ysclae, label/title)
+	_, xff, _, yff, int_ff_ideal, int_ff_onlyDPP	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw)
+	data_to_plot									.append((xff, yff, int_ff_onlyDPP))
+	plt_attributes									.append(('img','x (um)', 'y (um)', None, 400, 400, um, um, 'Intensity'))
+	if do_PS:
+		int_ff_DPP_and_PS 	= apply_polarisation_smoothing(int_ff_onlyDPP)
+		data_to_plot		.append((xff, yff, int_ff_DPP_and_PS))
+		plt_attributes		.append(('img','x (um)', 'y (um)', None, 400, 400, um, um, 'Intensity'))
+	center 							= int(np.ceil(len(int_ff[0,:]) / 2))
+	int_ff_ideal_center_row			= int_ff_ideal[center]
+	int_ff_onlyDPP_center_row		= int_ff_onlyDPP[center] / 300
+	int_ff_DPP_and_PS_center_row	= int_ff_DPP_and_PS[center] / 200
+	data_to_plot					.append((xff, yff, (int_ff_ideal_center_row, int_ff_onlyDPP_center_row, int_ff_DPP_and_PS_center_row)))
+	plt_attributes					.append(('line','x (um)', 'Intensity Normalized', None, 400, None, um, 1, 'lineout'))
+	num_plts 						= len(data_to_plot)
+	if num_plts < 4:
+		FIGURE 						= util_plt_one_column_or_row(data_to_plot, plt_attributes)
+	_, sigma_0						= quantify_nonuniformity(int_ff_ideal, int_ff_onlyDPP)
+	nonuniformity_percentage_PS, _ 	= quantify_nonuniformity(int_ff_ideal, int_ff_DPP_and_PS, sigma_0)
+	return FIGURE, nonuniformity_percentage_PS, 100
+def intensity_phase_plots(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, dpp):
+	x, xff, y, yff, int_ff_ideal, int_ff 	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw)
+	data 									= [int_ff_ideal, dpp, int_ff]
+	x_y 									= [(xff,yff), (x,y), (xff,yff)]
+	unit 									= [('um', um), ('cm', cm), ('um', um)]
+	fig, ax									= plt.subplots(nrows=1, ncols=3, figsize=(2*8,8))
 	for pos, data_array in enumerate(data):
-		x_val, y_val = x_y[pos]
-		pcm 		 = ax[pos].pcolormesh(x_val / unit[pos][1], y_val/ unit[pos][1], data_array,cmap='rainbow')
-		fig.colorbar(pcm, ax=ax[pos])
+		x_val, y_val	= x_y[pos]
+		pcm 			= ax[pos].pcolormesh(x_val / unit[pos][1], y_val/ unit[pos][1], data_array,cmap='rainbow')
+		cb				= fig.colorbar(pcm, ax=ax[pos])
 		ax[pos].set_xlabel(f"x {unit[pos][0]}")
 		ax[pos].set_ylabel(f"y {unit[pos][0]}")
 		if pos == 2:
@@ -264,13 +315,40 @@ def intensity_phase_plots(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, 
 			ax[pos].set_ylim(-400,400)
 	plt.tight_layout()
 	return fig
-def print_function(nx, dx, dxff, ny, dy, dyff, area_nf, area_ff, int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot, foc_len, Lambda):
+def util_shift_2_pi(phase_array, TWO_PI):
+	make_periodic 						= np.copy(phase_array)
+	if np.any(make_periodic 			> TWO_PI):
+		mask_above_2pi 					= make_periodic > TWO_PI
+		make_periodic[mask_above_2pi] 	-= TWO_PI
+		make_periodic 					= util_shift_2_pi(make_periodic, TWO_PI)
+	if np.any(make_periodic				<= 0):
+		mask_below_zero 				= make_periodic <= 0
+		make_periodic[mask_below_zero] 	+= TWO_PI
+		make_periodic 					= util_shift_2_pi(make_periodic, TWO_PI)
+	return make_periodic
+def make_periodic_phase(dpp_phase):
+	"""
+	Make a phase array periodic between 2pi and 0
+	Parameters:
+		dpp_phase (array of arrays of floats): 2d array containing phase values
+	"""
+	TWO_PI = 2*np.pi
+	make_periodic = util_shift_2_pi(dpp_phase, TWO_PI)
+	return make_periodic
+def print_function(nx, dx, dxff, ny, dy, dyff, area_nf, area_ff, int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot, foc_len, Lambda, nonuni_DPP, nonuni_DPP_PS):
 	print(f"""Far field grid scales area: {dxff/um:2.2f} microns by {dyff/um:2.2f} microns, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns
+
 Power in near field {pwr_beam_env_tot*1e-12:2.2e} TW, power in far field = {pwr_ff_tot* 1e-12:2.2e}TW,
+
 total intensity in near field {np.sum(int_beam_env) * 1e-12:2.2e} TW/m^2, total intensity in far field = {np.sum(int_ff)* 1e-12:2.2e} TW/m^2
+
 area_nearfield: {area_nf:2.2e}, area_farfield: {area_ff:2.2e}
+
 grid scale near field: {nx*dx:2.2f}m by {ny*dy:2.2f}m, focal length: {foc_len}m
-f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}""")
+
+f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}
+
+Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with PS: {nonuni_DPP_PS:3.2f}%""")
 	
 try:
 	from IPython import get_ipython  #checks if the code is running on an IPython environment
@@ -312,18 +390,25 @@ if __name__ == "__main__":
 	nx_, dx_, ny_, dy_, x1d_, y1d_, (x_,y_) = create_2D_grids(KesslerParms, resolution_fac=res_fac) #fine grid for high-res interpolation
 	phase_func   = RectBivariateSpline(x1d,y1d,dpp_phase)                                           #interpolate the phase array from the phase plate
 	dpp_phase    = phase_func(x1d_,y1d_)
+	dpp_phase_periodic = make_periodic_phase(dpp_phase)
 	nx, dx, x1d, ny, dy, y1d, (x,y), res_fac_pr = nx_, dx_, x1d_, ny_, dy_, y1d_, (x_,y_), res_fac
 # initial envelope and ffts
 	int_beam_env     = beam_envelope(alpha=np.log(0.5), sigma= (25.8*cm) / 2, x=x_, y=y_, N=24) #Beam intensity envelope at lens
 	area_nf          = dx * dy
-	xff1d, xff, dxff, yff1d, yff, dyff, int_ff, far_field_ideal, pwr_beam_env = perform_fft_normalize(int_beam_env, area_nf, dpp_phase)
+	xff1d, xff, dxff, yff1d, yff, dyff, int_ff, far_field_ideal, pwr_beam_env = perform_fft_normalize(int_beam_env, area_nf, dpp_phase_periodic)
 	pwr_beam_env_tot = np.sum(pwr_beam_env)
 	area_ff = dxff * dyff
 	pwr_ff_tot           = np.sum(int_ff * area_ff)
+	int_beam_env = pwr_beam_env / area_nf
 # making figures
-	FIGURE1_PHASE_INTENSITY = intensity_phase_plots((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), int_beam_env, int_ff, dpp_phase)
+	# FIGURE1_PHASE_INTENSITY = intensity_phase_plots((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), int_beam_env, int_ff, dpp_phase_periodic)
+	ONLY_INTENSITY, nonuniform_DPP_and_PS, nonuniform_DPP = intensity_plot((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), int_beam_env, int_ff, do_PS=True)
 	# fig = make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff, dpp_phase, int_beam_env, int_ff, pwr_ff_tot, near_field, cm, cm2, um)
 	
-	print_function(nx, dx, dxff, ny, dy, dyff, area_nf, area_ff, int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot, foc_len, Lambda)
+	print_function(nx, dx, dxff, ny, dy, dyff,
+				area_nf, area_ff,
+				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
+				foc_len, Lambda,
+				nonuniform_DPP, nonuniform_DPP_and_PS)
 	
 	plt.show()
