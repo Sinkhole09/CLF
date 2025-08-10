@@ -245,7 +245,7 @@ def util_phase_modulation_eqn(x, y, t):
 # B integral
 # SSD
 	delta_x, delta_y 	= 14.3, 6.15 			# no units; the modulation depth
-	v_x, v_y			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency
+	v_x, v_y			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency # THIS MAKES THE BIGGEST DIFFERENCE IN NON-UNIFORMITY DECREASE
 	omega_x, omega_y 	= TWO_PI*v_x, TWO_PI*v_y# rads/s; angular rf modulation frequency
 	zeta_x, zeta_y		= 0.300e-9, 1.13e-9		#s/m; describes the variation in phase across the beam due to the angular grating dispersion
 	phi_2D_ssd 			= 3 * delta_x*np.sin(omega_x * (t + zeta_x * x)) + 3 * delta_y*np.sin(omega_y * (t + zeta_y * y)) # equation (3) from Regan et. all (2005)
@@ -269,35 +269,53 @@ def util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_f
 	int_ff = int_ff_raw / peak_int_ideal
 
 	return x, xff, y, yff, int_ff_ideal, int_ff
+def util_img_plot(fig, ax, x, y, data, attributes):
+	plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, y_scale, varname = attributes
+	ax.set_xlabel(xlabel)
+	ax.set_ylabel(ylabel)
+	pcm		= ax.pcolormesh(x / x_scale, y / y_scale, data, norm=norm, cmap='rainbow')
+	cb 		= fig.colorbar(pcm, ax=ax)
+	cb		.set_label(varname)
+	if xlim:
+		ax.set_xlim(-1*xlim, xlim)
+	if ylim:	
+		ax.set_ylim(-1*ylim, ylim)
+def util_line_plot(ax, x, y, data, attributes):
+	plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, line_design, varname = attributes
+	for index, line in enumerate(data):
+		line_style, colour, name = line_design[index]
+		ax.plot(x / x_scale, line, linestyle=line_style, color=colour, label=name)
+	ax.set_xlabel(xlabel)
+	ax.set_ylabel(ylabel)
+	lower, upper = ylim
+	ax.set_yscale(norm)
+	ax.set_xlim(-1*xlim, xlim)
+	ax.set_ylim(lower, upper) #if plot_type is line, expect ylim to be a tuple of two ints
+	ax.legend()
 def util_plt_one_column_or_row(data_arrays, plt_attributes, one_col=True):
-	if one_col:
-		fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(8,2*8))
-	else:
-		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*8,8)) 
+	if one_col: fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(8,2*8))
+	else: 		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*8,8)) 
 	for pos, data in enumerate(data_arrays):
-		x, y, data_array 														= data
-		plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, y_scale, varname 	= plt_attributes[pos]
-		ax[pos]	.set_xlabel(xlabel)
-		ax[pos]	.set_ylabel(ylabel)
+		x, y, data_array 	= data
+		plot_type 			= plt_attributes[pos][0]
 		if plot_type == 'img':
-			pcm		= ax[pos].pcolormesh(x / x_scale, y / y_scale, data_array, norm=norm, cmap='rainbow')
-			cb 		= fig.colorbar(pcm, ax=ax[pos])
-			cb		.set_label(varname)
+			util_img_plot(fig, ax[pos], x, y, data_array, plt_attributes[pos])
 		if plot_type == 'line':
-			line1, line2, line3 = data_array
-			lower, upper = ylim
-			ax[pos].plot(x / x_scale, line1, linestyle='--', color='red', label='Ideal Lineshape')
-			ax[pos].plot(x / x_scale, line2, color='black', label='Without PS')
-			ax[pos].plot(x / x_scale, line3, color='grey', label='With PS')
-			ax[pos].set_yscale(norm)
-			ax[pos].set_xlim(-1*xlim, xlim)
-			ax[pos].set_ylim(lower, upper) #if plot_type is line, expect ylim to be a tuple of two ints
-			ax[pos].legend()
-			continue
-		if xlim:
-			ax[pos]	.set_xlim(-1*xlim, xlim)
-		if ylim:	
-			ax[pos]	.set_ylim(-1*ylim, ylim)
+			util_line_plot(ax[pos], x, y, data_array, plt_attributes[pos])
+	return fig
+def util_plt_MbyN_grid(data_Arrays, plt_attributes, nrows=3, fig_scale=8):
+	num_plots = len(data_Arrays)
+	ncols = int(np.ceil(num_plots / nrows))
+	fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(nrows*fig_scale, ncols*fig_scale))
+	for pos, data in enumerate(data_Arrays):
+		ix = pos % nrows
+		iy = pos // nrows
+		x, y, data_array 	= data
+		plot_type 			= plt_attributes[pos][0]
+		if plot_type == 'img':
+			util_img_plot(fig, ax[ix, iy], x, y, data_array, plt_attributes[pos])
+		if plot_type == 'line':
+			util_line_plot(ax[ix, iy], x, y, data_array, plt_attributes[pos])
 	return fig
 def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ssd_data_items=None, do_PS=False, do_PS_SSD=False, ps_shift=4, do_LogNorm=False, do_line=False, plot_ssd=False):
 	"""
@@ -319,35 +337,37 @@ def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ssd
 	plt_attributes									.append(ff_attribute + ("DPP INT",))
 	if plot_ssd:
 		_, _, _, _, _, int_ff_ssd	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
-									int_ff_ideal_raw, int_ff_ssd_raw)
+														int_ff_ideal_raw, int_ff_ssd_raw)
 		data_to_plot				.append(ff_data + (int_ff_ssd,))						# phase plate and ssd applied
 		plt_attributes				.append(ff_attribute + (f"DPP SSD INT, t_res: {ssd_time_resolution}\n duration: {ssd_duration:2.0e}s",))
 	else: do_PS_SSD=False
 	if do_PS:
-		if do_PS_SSD: to_smooth = int_ff_ssd
-		else: to_smooth 		= int_ff_onlyDPP
-		int_ff_DPP_and_PS 	= apply_polarisation_smoothing(to_smooth, shift=ps_shift)					# phase plate and ps applied
-		data_to_plot		.append(ff_data + (int_ff_DPP_and_PS,))
-		plt_attributes		.append(ff_attribute+ (f"DPP PS INT",))
+		if do_PS_SSD: to_smooth, plot_name 	= int_ff_ssd, f"DPP PS SSD INT"
+		else: to_smooth 					= int_ff_onlyDPP, f"DPP PS INT"
+		int_ff_DPP_and_PS 		= apply_polarisation_smoothing(to_smooth, shift=ps_shift)					# phase plate and ps applied
+		data_to_plot			.append(ff_data + (int_ff_DPP_and_PS,))
+		plt_attributes			.append(ff_attribute+ (plot_name,))
 	if do_line:
 		center 									= int(np.ceil(len(int_ff[0,:]) * 0.5))
 		int_ff_ideal_center_row					= int_ff_ideal[center]
 		int_ff_onlyDPP_center_row				= int_ff_onlyDPP[center]
 		data_lines 								= (int_ff_ideal_center_row, int_ff_onlyDPP_center_row)
+		line_designs							= [('--', 'red', 'Ideal lineshape'), (':', 'black', 'Only Phase Plate')]
 		if do_PS:
 			int_ff_DPP_and_PS_center_row		= int_ff_DPP_and_PS[center]
 			data_lines							+= (int_ff_DPP_and_PS_center_row,)
+			line_designs						.append(('-', 'grey', 'with PS'))
 		if plot_ssd:
-			int_ff_DPP_SSD_center_row		= int_ff_ssd[center]
-			data_lines						+= (int_ff_DPP_SSD_center_row,) 
-		data_to_plot					.append((xff, yff,) + (data_lines,))
-		plt_attributes					.append(('line','x (um)', 'Intensity Normalized', 'log', 600, (None,None), um, 1, 'lineout'))
-	num_plts 							= len(data_to_plot)
-	if num_plts < 4:
-		FIGURE	= util_plt_one_column_or_row(data_to_plot, plt_attributes)
-	_, sigma_0	= quantify_nonuniformity(int_ff_ideal, int_ff_onlyDPP)
-	nonuniformity_percentage_PS, _ 	= quantify_nonuniformity(int_ff_ideal, int_ff_DPP_and_PS, sigma_0) 	if do_PS 	else -1, _
-	nonuniformity_percentage_ssd, _ = quantify_nonuniformity(int_ff_ideal, int_ff_ssd, sigma_0) 		if plot_ssd else -1, _
+			int_ff_DPP_SSD_center_row	= int_ff_ssd[center]
+			data_lines					+= (int_ff_DPP_SSD_center_row,)
+			line_designs				.append(('-.', 'blue', 'with SSD'))
+		data_to_plot	.append((xff, yff,) + (data_lines,))
+		plt_attributes	.append(('line','x (um)', 'Intensity Normalized', 'log', 1000, (None,None), um, line_designs, 'lineout'))
+	num_plts 	= len(data_to_plot)
+	FIGURE		= util_plt_one_column_or_row(data_to_plot, plt_attributes) if num_plts < 4 else util_plt_MbyN_grid(data_to_plot, plt_attributes)
+	_, sigma_0							= quantify_nonuniformity(int_ff_ideal, int_ff_onlyDPP)
+	(nonuniformity_percentage_PS, _) 	= quantify_nonuniformity(int_ff_ideal, int_ff_DPP_and_PS, sigma_0) 	if do_PS 	else (-1, _)
+	(nonuniformity_percentage_ssd, _) 	= quantify_nonuniformity(int_ff_ideal, int_ff_ssd, sigma_0) 		if plot_ssd else (-1, _)
 	return FIGURE, nonuniformity_percentage_PS, nonuniformity_percentage_ssd, 100
 # def intensity_plots(int_ideal, intensity_distributions, do_PS=False, do_LogNorm=False):
 # 	norm = None
@@ -424,6 +444,7 @@ grid scale near field: {nx*dx:2.2f}m by {ny*dy:2.2f}m, focal length: {foc_len}m
 f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}
 
 Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with PS: {nonuni_DPP_PS:3.2f}%, with ssd: {nonuni_DDP_SSD:3.2f}%, ssd time resolution: {ssd_time_resoution}""")
+
 try:
 	from IPython import get_ipython  #checks if the code is running on an IPython environment
 	ip = get_ipython()               #tries to retrive the interactive python shell object
@@ -471,10 +492,10 @@ if __name__ == "__main__":
 	xff1d, xff, dxff, yff1d, yff, dyff, int_ff, far_field_ideal, pwr_beam_env, near_field = perform_fft_normalize(int_beam_env, area_nf,
 																											   dpp_phase, do_dpp=True, do_ssd=False)
 # applying ssd
-	ssd_time_resolution						= 100
+	ssd_time_resolution						= 200
 	ssd_duration							= 1e-9
 	_, _, _, _, _, _, int_ff_ssd, _, _, _ 	= perform_fft_normalize(int_beam_env, area_nf,
-															   dpp_phase, do_dpp=True, do_ssd=False,
+															   dpp_phase, do_dpp=True, do_ssd=True,
 															   x=x, y=y, time=ssd_duration, time_resolution=ssd_time_resolution)
 # this must be done after the previous perform_fft_normalize() function call becuase we are changing int_beam_env
 	pwr_beam_env_tot 	= np.sum(pwr_beam_env)				
@@ -486,16 +507,16 @@ if __name__ == "__main__":
 	ONLY_INTENSITY, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 																		int_ff_ideal_raw=int_beam_env, int_ff_raw=int_ff,
 																		ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
-																		do_PS=True, plot_ssd=False, do_PS_SSD=True, ps_shift=10, do_line=True)
+																		do_PS=True, plot_ssd=True, do_PS_SSD=True, ps_shift=10, do_line=True)
 	# fig = make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff,
 	# 				   dpp_phase, int_beam_env, int_ff, pwr_ff_tot, near_field,
 	# 				   cm, cm2, um)
 # printing key results
-	# var_list = [nx, dx, dxff, ny, dy, dyff,
-	# 			area_nf, area_ff,
-	# 			int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
-	# 			foc_len, Lambda,
-	# 			nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution]
-	# print_function(var_list)
+	var_list = [nx, dx, dxff, ny, dy, dyff,
+				area_nf, area_ff,
+				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
+				foc_len, Lambda,
+				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution]
+	print_function(var_list)
 	
 	plt.show()
