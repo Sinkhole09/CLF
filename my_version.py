@@ -62,16 +62,19 @@ def smooth(ar,nsmooth):
 		ar = h2d.zcen(h2d.pcen(ar))
 		n+=1
 	return ar
-def beam_envelope(alpha, sigma, x, y, N, super_g_x_zero=1, super_g_y_zero=1):
-		"""
-		np.exp(alpha * (np.sqrt (x ** 2 + y ** 2) / (sigma)) ** N)
-		"""
-		envelope 	= np.exp(
-				alpha * (np.sqrt(
-				(x / super_g_x_zero) ** 2 + (y / super_g_y_zero) ** 2
-			) / (sigma)) ** N
-		) #Beam intensity envelope at lens
-		return envelope
+def beam_envelope(x, y, N, alpha=1, sigma=1, super_g_x_zero=1, super_g_y_zero=1):
+	"""
+	np.exp(
+			alpha * (np.sqrt(
+			(x / super_g_x_zero) ** 2 + (y / super_g_y_zero) ** 2
+		) / (sigma)) ** N
+	"""
+	envelope 	= np.exp(
+			alpha * (
+			((x / super_g_x_zero) ** 2 + (y / super_g_y_zero) ** 2) / sigma**2
+		) ** N
+	) #Beam intensity envelope at lens
+	return envelope
 def create_2D_grids(KesslerParms, resolution_fac=1):
 	nx             = KesslerParms.fftCells_x * resolution_fac  # Number of pixels in the x-direction in the FFT grid (simulated near-field image)
 	dx             = KesslerParms.nfPixSize_x / resolution_fac # Size of each pixel in x-direction at the near-field plane (where FFT is evaluated); I guess in meters?
@@ -82,41 +85,13 @@ def create_2D_grids(KesslerParms, resolution_fac=1):
 	x,y          = np.meshgrid(x1d,y1d,indexing='ij')
 
 	return nx, dx, ny, dy, x1d, y1d, (x,y)
-'''
-Old code implementing incorrect physics:
-# # apply ssd
-# 	if do_ssd:
-# 		near_field = apply_smoothing_by_spectral_dispersion(E_near_field=efield_beam_env, x_mesh=x, y_mesh=y, time=time, time_resolution=time_resolution)
-# # intensity in far field
-# 	if do_dpp:
-# 		dpp              = np.exp(-1j * dpp_phase)                  # complex number of unit modulus. Product simply changes phase
-# 		near_field       *= dpp                                     # apply DPP phase modulation
-# 	far_field        = np.fft.fftshift(np.fft.fft2(near_field))		# 2D fft then shift zero-frequency component to the center of the spectrum
-# 	int_ff = np.abs(far_field) ** 2
-'''
-def perform_fft_normalize(int_beam_env, area_nf,  dpp_phase, do_normalization=True, do_dpp=True, do_ssd=False, x=None, y=None, time=None, time_resolution=None):
-# old approach to normalizing:
-	pwr_beam_env    	= int_beam_env * area_nf			#power  envelope at lens
+def util_scale_int_env(int_beam_env, area, beam_power):
+	pwr_beam_env    	= int_beam_env * area				#power  envelope at lens
 	pwr_beam_env_tot	= np.sum(pwr_beam_env)
 	pwr_beam_env   		*= beam_power / pwr_beam_env_tot	#W
-
-	int_beam_env		= pwr_beam_env / area_nf				#W/m^2
-	efield_beam_env		= np.exp(-1j) * np.exp(1j) * (int_beam_env)**0.5		#V/m    #proportionality relation. E field amplitude squared is proportional to intensity
-	near_field 			= efield_beam_env
-# idealised far field intensity distribution (fft before phase plate or smoothing)
-	far_field_ideal = np.fft.fftshift(np.fft.fft2(near_field))
-# applying ssd and finding far field intensity distribution
-	if do_dpp:
-		dpp				= np.exp(-1j * dpp_phase)                  # complex number of unit modulus. Product simply changes phase
-		near_field		*= dpp                                     # apply DPP phase modulation
-	if do_ssd:
-		int_ff = np.zeros(np.shape(near_field))
-		for near_field in tqdm(apply_smoothing_by_spectral_dispersion(
-			E_near_field=near_field, x_mesh=x, y_mesh=y, time=time, time_resolution=time_resolution, use_gen=True
-			), desc="Applying polarization smoothing"):
-			int_ff	+= np.abs(np.fft.fftshift(np.fft.fft2(near_field))) ** 2
-	else:
-		int_ff = np.abs(np.fft.fftshift(np.fft.fft2(near_field))) ** 2
+	int_beam_env			= pwr_beam_env / area_nf		#W/m^2
+	return int_beam_env
+def util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy):
 	dxff, dyff = foc_len * Lambda / (dx * nx), foc_len * Lambda / (dy * ny)         # both values are in meters. Limit of resolution due to diffraction
 																					# dx * nx gives total simulated distance at near field in meters
 																					# foc_len / (dx * nx) is supposed to be f_number (but it isn't == the global variable f_number)
@@ -125,11 +100,49 @@ def perform_fft_normalize(int_beam_env, area_nf,  dpp_phase, do_normalization=Tr
 	yff1d            = np.linspace(-1 * ny / 2, ny / 2, nx) * dyff
 	xff,yff          = np.meshgrid(xff1d, yff1d, indexing='ij')
 	area_ff          = dxff * dyff
-	pwr_ff           = int_ff * area_ff
+	return xff1d, dxff, xff, yff1d, dyff, yff, area_ff 
+def util_compute_fft(near_field):
+	efield_ff =  np.fft.fftshift(
+					np.fft.fft2(
+						near_field))
+	return np.abs(efield_ff)**2
+def perform_fft_normalize(int_beam_env, dpp_phase, area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, x=None, y=None, time=None, time_resolution=None):
+	efield_beam_env			= np.exp(-1j) * np.exp(1j) * (int_beam_env)**0.5		#V/m    #proportionality relation. E field amplitude squared is proportional to intensity
+	near_field 				= efield_beam_env
+# idealised far field intensity distribution (fft before phase plate or smoothing)
+	far_field_ideal = util_compute_fft(near_field)
+# applying ssd and finding far field intensity distribution
+	if do_dpp:
+		dpp				= np.exp(1j * dpp_phase)					# complex number of unit modulus. Product simply changes phase
+		near_field		*= dpp										# apply DPP phase modulation
+		int_ff_onlyDPP	=  util_compute_fft(near_field)
+	if do_ssd:
+		int_ff_ssd, int_ff_ssd_ps		= np.zeros(np.shape(near_field)), np.zeros(np.shape(near_field))
+		sigma_rms_ssd_all				= [quantify_nonuniformity(int_beam_env, int_ff_onlyDPP)[1]]
+		sigma_rms_ssd_ps_all			= [quantify_nonuniformity(int_beam_env, apply_polarisation_smoothing(int_ff_onlyDPP))[1]]
+		# sigma_rms = []
+		for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
+			E_near_field=near_field, x_mesh=x, y_mesh=y, time=time, time_resolution=time_resolution, use_gen=True
+			)), desc="Applying smoothing by spectral dispersion smoothing"):
+			int_ff				= util_compute_fft(near_field)
+			int_ff_ssd			+= int_ff
+			int_ff_ssd_ps		= apply_polarisation_smoothing(int_ff_ssd)
+			_, sigma_rms_ssd 	= quantify_nonuniformity(int_beam_env, int_ff_ssd / (idx + 1), sigma_rms_ssd_all[0])
+			_, sigma_rms_ssd_ps = quantify_nonuniformity(int_beam_env, int_ff_ssd_ps / (idx + 1), sigma_rms_ssd_ps_all[0])
+			# print(f"ssd sigma rms: {sigma_rms_ssd:2.2e}, percentage: {percent:2.2f}%")
+			sigma_rms_ssd_all	.append(sigma_rms_ssd)
+			sigma_rms_ssd_ps_all.append(sigma_rms_ssd_ps)
+		sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
+		sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
+		int_ff					= int_ff_ssd / time_resolution
+	else:
+		int_ff 									= util_compute_fft(near_field)
+		sigma_rms_ssd_all, sigma_rms_ssd_ps_all = None, None
 # The FFT isn't conserving energy (not sure it should) so re-normlising here!
-	pwr_ff          *= beam_power/np.sum(pwr_ff)
+	pwr_ff           = int_ff * area_ff
+	pwr_ff          *= beam_power / np.sum(pwr_ff)
 	int_ff           = pwr_ff / area_ff
-	return xff1d, xff, dxff, yff1d, yff, dyff, int_ff, far_field_ideal, pwr_beam_env, near_field
+	return int_ff, far_field_ideal, near_field, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
 def make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff, dpp_phase, int_beam_env, int_ff, pwr_ff_tot, near_field, cm, cm2, um):
 	nrows=2;ncols=4;ix=-1;iy=0
 	fig, ax = plt.subplots(nrows, ncols,num=0,figsize=(ncols*8,nrows*6))
@@ -240,12 +253,11 @@ def expand_grid(meshes):
 		expanded_meshes.append(expanded_mesh)
 	return expanded_meshes
 def quantify_nonuniformity(int_ideal, int_nonuniform, sigma_0=None):
-	rows, cols = np.shape(int_ideal)
 	rms_nonuniformity_array = np.abs(int_ideal - int_nonuniform) ** 2
-	sigma_rms = np.sqrt(np.sum(rms_nonuniformity_array) / (rows * cols))
+	sigma_rms = np.sqrt(np.sum(rms_nonuniformity_array) / len(rms_nonuniformity_array))
 	nonuniformity_percentage = None
 	if sigma_0:
-		nonuniformity_percentage = sigma_rms / sigma_0 * 100
+		nonuniformity_percentage = (sigma_rms / sigma_0) * 100
 	return nonuniformity_percentage, sigma_rms
 def apply_polarisation_smoothing(int_ff, shift=4, conversion_factor=1):
 	"""
@@ -271,8 +283,8 @@ def util_phase_modulation_eqn(x, y, t):
 	phi_2D_ssd 			= 3 * delta_x*np.sin(omega_x * (t + zeta_x * x)) + 3 * delta_y*np.sin(omega_y * (t + zeta_y * y)) # equation (3) from Regan et. all (2005)
 	phi 				+= phi_2D_ssd
 	return phi
-def apply_smoothing_by_spectral_dispersion(E_near_field, time, x_mesh, y_mesh, time_resolution, use_gen=False):
-	timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
+def apply_smoothing_by_spectral_dispersion(E_near_field, time, x_mesh, y_mesh, time_resolution, use_gen=True):
+	timesteps 			= [i*(time / time_resolution) for i in range(1, time_resolution)] # dividing the total time into discrete steps
 	rows, cols 			= np.shape(E_near_field)
 	E_near_field_ssd 	= np.zeros((rows,cols), dtype=complex)
 	if not use_gen:
@@ -280,7 +292,7 @@ def apply_smoothing_by_spectral_dispersion(E_near_field, time, x_mesh, y_mesh, t
 			E_near_field_ssd += E_near_field * np.exp(1j * util_phase_modulation_eqn(x_mesh, y_mesh, timestep))
 		return E_near_field_ssd / time_resolution
 	else:
-		for timestep in timesteps:
+		for pos, timestep in enumerate(timesteps):
 			yield E_near_field * np.exp(1j * util_phase_modulation_eqn(x_mesh, y_mesh, timestep))
 def apply_smoothing_by_spectral_dispersion_new(E_near_field, time, x_mesh, y_mesh, time_resolution):
 	timesteps 	= np.array([i*(time / time_resolution) for i in range(time_resolution)]) # dividing the total time into discrete steps
@@ -322,17 +334,26 @@ def util_img_plot(fig, ax, x, y, data, attributes):
 		ax.set_xlim(-1*xlim, xlim)
 	if ylim:	
 		ax.set_ylim(-1*ylim, ylim)
-def util_line_plot(ax, x, y, data, attributes):
+def util_line_plot(ax, x, y, data, attributes, xnorm=None):
 	plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, line_design, varname = attributes
-	for index, line in enumerate(data):
-		line_style, colour, name = line_design[index]
-		ax.plot(x / x_scale, line, linestyle=line_style, color=colour, label=name)
+	if np.shape(line_design) == (3,):
+		line_style, colour, label = line_design
+		ax.plot(x / x_scale, data, linestyle=line_style, color=colour, label=label, marker='x')
+	else:
+		for index, line in enumerate(data):
+			line_style, colour, label = line_design[index]
+			ax.plot(x / x_scale, line, linestyle=line_style, color=colour, label=label)
 	ax.set_xlabel(xlabel)
 	ax.set_ylabel(ylabel)
-	lower, upper = ylim
-	ax.set_yscale(norm)
-	ax.set_xlim(-1*xlim, xlim)
-	ax.set_ylim(lower, upper) #if plot_type is line, expect ylim to be a tuple of two ints
+	if xlim:
+		ax.set_xlim(-1*xlim, xlim)
+	if ylim:
+		lower, upper = ylim
+		ax.set_ylim(lower, upper) #if plot_type is line, expect ylim to be a tuple of two ints
+	if norm:
+		ax.set_yscale(norm)
+	if xnorm:
+		ax.set_xscale(xnorm)
 	ax.legend()
 def util_plt_one_column_or_row(data_arrays, plt_attributes, one_col=True):
 	if one_col: fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(8,2*8))
@@ -361,7 +382,7 @@ def util_plt_MbyN_grid(data_Arrays, plt_attributes, nrows=3, fig_scale=8):
 			util_line_plot(ax[ix, iy], x, y, data_array, plt_attributes[pos])
 	plt.tight_layout()
 	return fig
-def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ssd_data_items=None, do_ideal=True, do_DPP=True,do_PS=False, do_PS_SSD=False, ps_shift=4, do_LogNorm=False, do_line=False, plot_ssd=False):
+def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ideal_int_nf=True, ssd_data_items=None, do_ideal=True, do_DPP=True, do_PS=False, do_PS_SSD=False, ps_shift=4, do_LogNorm=False, do_line=False, plot_ssd=False):
 	"""
 	Make plots of ff intensity distribution with different levels of smoothing applied.
 	"""
@@ -371,14 +392,15 @@ def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ssd
 	line_norm		= 'linear'
 	plt_attributes 	= [] # (plot_type, xlabel, ylabel, norm, xlim, ylim, xscale, ysclae, label/title)
 	ff_attribute	= ('img','x (um)', 'y (um)', img_norm, 400, 400, um, um)
-	nf_attribute	= ('img','x (cm)', 'y (cm)', img_norm, None, None, cm, cm)
+	nf_attribute	= ('img','x (cm)', 'y (cm)', img_norm, 14, 14, cm, cm)
 	ff_data			= (ff_x[0], ff_y[0])
 	nf_data			= (nf_x[0], nf_y[0])
 	_, xff, _, yff, int_ff_ideal, int_ff_onlyDPP	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
 																			 int_ff_ideal_raw, int_ff_raw)
 	if do_ideal:
-		data_to_plot									.append(nf_data + (int_ff_ideal,))
-		plt_attributes									.append(nf_attribute + ("IDEAL INT",))
+		(data, attribute) = (nf_data, nf_attribute) if ideal_int_nf else (ff_data, ff_attribute)
+		data_to_plot									.append(data + (int_ff_ideal,))
+		plt_attributes									.append(attribute + ("IDEAL INT",))
 	if do_DPP:
 		data_to_plot									.append(ff_data + (int_ff_onlyDPP,))					# only phase plate applied
 		plt_attributes									.append(ff_attribute + ("DPP INT",))
@@ -436,16 +458,45 @@ def intensity_phase_plots(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, 
 			ax[pos].set_ylim(-400,400)
 	plt.tight_layout()
 	return fig
-def make_plots(data_to_plot, nf_scale=10, ff_scale=600):
-	x, y, data_array, plt_type, varname, norm = data_to_plot
-# (plot_type, xlabel, ylabel, norm, xlim, ylim, xscale, ysclae, label/title)
-	ff_attribute	= ('img','x (um)', 'y (um)', norm, ff_scale, ff_scale, um, um)
-	nf_attribute	= ('img','x (cm)', 'y (cm)', norm, nf_scale, nf_scale, cm, cm)
-	
-	attribute = ff_attribute + (varname,) if plt_type == 'ff' else nf_attribute + (varname,)
+def util_apply_twoD_hamming_filter(int_dist):
+	rows, cols = np.shape(int_dist)
+	hamming_y = np.hamming(rows)
+	hamming_x = np.hamming(cols)
+	two_dimentional_hamming_array = np.outter(hamming_y, hamming_x)
+	return int_dist * two_dimentional_hamming_array
+def make_plots(collection):
+	'''
+	Make a 2D plot. Provide: data_array, scope, varname, norm, plt_type = data_to_plot 
+	'''
 	fig, ax = plt.subplots()
-	util_img_plot(fig, ax, x, y, data_array, attribute)
+	for items in collection:
+		data_to_plot, x, y, xff, yff, xnorm, nf_lim, ff_lim = items
+		data_array, scope, varname, norm, plt_type = data_to_plot
+													#line_style, colour, label
+				# this is weird, but when ploting lines, yff stores the line design as a tuple
+		yscale = [yff, yff] if plt_type == 'line' else [um, cm]
+		xscale = [1e-9,1e-9] 	if plt_type == 'line' else [um, cm]
+		xlabel = 'time (ns)' 	if plt_type == 'line' else 'x'
+		ylabel = scope 			if plt_type == 'line' else 'y'
+	# (plot_type, xlabel, ylabel, norm, xlim, ylim, xscale, ysclae, label/title)
+		ff_attribute	= (plt_type, xlabel, ylabel, norm, ff_lim, ff_lim, xscale[0], yscale[0])
+		nf_attribute	= (plt_type, xlabel, ylabel, norm, nf_lim, nf_lim, xscale[1], yscale[1])
+		
+		attribute 			= ff_attribute + (varname,) if scope == 'ff' else nf_attribute + (varname,)
+		(x_grid, y_grid)	= (xff, yff)				if scope == 'ff' else (x, y)
+		if plt_type 	== 'img'	: util_img_plot(fig, ax, x_grid, y_grid, data_array, attribute)
+		elif plt_type 	== 'line'	: util_line_plot(ax, x, y, data_array, attribute, xnorm=xnorm)
 	return fig
+# def plot_moving_speckels(int_beam_env,dpp_phase, x, y, time, time_resolution, img_norm=None):
+# 	fig, ax = plt.subplots()
+# 	ff_attribute	= ('img','x (um)', 'y (um)', img_norm, 400, 400, um, um)
+# 	for int_ff in perform_fft_normalize(int_beam_env, show_moving_speckles=True,
+# 						dpp_phase=dpp_phase, do_dpp=True, do_ssd=do_ssd,
+# 						x=x, y=y, time=ssd_duration, time_resolution=ssd_time_resolution):
+# 		util_img_plot(fig, ax, x, y, int_ff, ff_attribute)
+# 		plt.pause(0.1)
+# 		plt.show()		
+# 	return
 def util_shift_2_pi(phase_array, TWO_PI):
 	make_periodic 						= np.copy(phase_array)
 	if np.any(make_periodic 			> TWO_PI):
@@ -471,7 +522,7 @@ def print_function(var_list):
 	(nx, dx, dxff, ny, dy, dyff, area_nf, area_ff,
 	int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 	foc_len, Lambda,
-	nonuni_DPP, nonuni_DPP_PS, nonuni_DDP_SSD, ssd_time_resoution) = tuple(var_list)
+	nonuni_DPP, nonuni_DPP_PS, nonuni_DDP_SSD, ssd_time_resoution, ssd_time_duration) = tuple(var_list)
 	print(f"""Far field grid scales area: {dxff/um:2.2f} microns by {dyff/um:2.2f} microns, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns
 
 Power in near field {pwr_beam_env_tot*1e-12:2.2e} TW, power in far field = {pwr_ff_tot* 1e-12:2.2e}TW,
@@ -484,7 +535,7 @@ grid scale near field: {nx*dx:2.2f}m by {ny*dy:2.2f}m, focal length: {foc_len}m
 
 f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}
 
-Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with PS: {nonuni_DPP_PS:3.2f}%, with ssd: {nonuni_DDP_SSD:3.2f}%, ssd time resolution: {ssd_time_resoution}""")
+Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with PS: {nonuni_DPP_PS:3.2f}%, with ssd: {nonuni_DDP_SSD:3.2f}%, ssd time resolution: {ssd_time_resoution}, ssd time duration: {ssd_time_duration}""")
 
 try:
 	from IPython import get_ipython  #checks if the code is running on an IPython environment
@@ -528,40 +579,65 @@ if __name__ == "__main__":
 		dpp_phase = make_periodic_phase(dpp_phase)
 	nx, dx, x1d, ny, dy, y1d, (x,y), res_fac_pr = nx_, dx_, x1d_, ny_, dy_, y1d_, (x_,y_), res_fac
 # initial envelope and ffts
-	int_beam_env		= beam_envelope(alpha=np.log(0.5), sigma= (25.8*cm) / 2, x=x_, y=y_, N=24) 									# Beam intensity envelope at lens
-	int_beam_env_ff		= beam_envelope(alpha=-1, sigma=1, x=x_, y=y_, super_g_x_zero=358e-4*cm, super_g_y_zero=358e-4*cm, N=4.77)	# same env as visrad and pyodin
-	area_nf				= dx * dy
-	xff1d, xff, dxff, yff1d, yff, dyff, int_ff, far_field_ideal, pwr_beam_env, near_field = perform_fft_normalize(int_beam_env, area_nf,
-																											   dpp_phase, do_dpp=True, do_ssd=False)
+	area_nf												= dx * dy
+	xff1d, dxff, xff, yff1d, dyff, yff, area_ff 		= util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
+	int_beam_env_nf										= beam_envelope(alpha=np.log(0.5), sigma= (25.8*cm) / 2,
+									   									x=x_, y=y_, N=24/2) 											# Beam intensity envelope at lens
+	int_beam_env_ff										= beam_envelope(alpha=-1, x=xff, y=yff,
+										  								super_g_x_zero=358e-4*cm, super_g_y_zero=358e-4*cm, N=4.77/2)	# same env as visrad and pyodin
+	int_beam_env_nf										= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
+	int_beam_env_ff										= util_scale_int_env(int_beam_env_ff, area_ff, beam_power)
+	use_prescribed_nf 									= False
+	if use_prescribed_nf: 	int_beam_env = int_beam_env_nf
+	else:	int_beam_env = int_beam_env_ff
+		# int_beam_env = np.abs(
+		# 											np.fft.fftshift(
+		# 													np.fft.ifft2(
+		# 														np.sqrt(int_beam_env_ff)
+		# 													)
+		# 												)
+		# 											) ** 2
+	int_ff, far_field_ideal, near_field, _, _				 	= perform_fft_normalize(int_beam_env=int_beam_env, area_nf=area_nf, area_ff=area_ff,
+																  dpp_phase=dpp_phase, do_ssd=False)
 # applying ssd
-	do_ssd									= False
-	ssd_time_resolution						= 100
-	ssd_duration							= 1e-11
-	_, _, _, _, _, _, int_ff_ssd, _, _, _ 	= perform_fft_normalize(int_beam_env, area_nf,
-															   dpp_phase, do_dpp=True, do_ssd=do_ssd,
-															   x=x, y=y, time=ssd_duration, time_resolution=ssd_time_resolution)
-# this must be done after the previous perform_fft_normalize() function call becuase we are changing int_beam_env
-	pwr_beam_env_tot 	= np.sum(pwr_beam_env)				
-	area_ff 			= dxff * dyff
+	do_ssd				= True
+	ssd_time_resolution	= 200
+	ssd_duration		= 1e-9
+	ssd_timesteps		= np.array([i*(ssd_duration / ssd_time_resolution) for i in range(ssd_time_resolution)])
+	int_ff_ssd, _, _, sigma_rms_ssd, sigma_rms_ssd_ps = perform_fft_normalize(int_beam_env=int_beam_env, area_nf=area_nf, area_ff=area_ff,
+													dpp_phase=dpp_phase, do_dpp=True, do_ssd=do_ssd,
+													x=x, y=y, time=ssd_duration, time_resolution=ssd_time_resolution)
+# # this must be done after the previous perform_fft_normalize() function call becuase we are changing int_beam_env
+	pwr_beam_env_tot	= np.sum(int_beam_env * area_nf)
 	pwr_ff_tot      	= np.sum(int_ff * area_ff)
-	int_beam_env 		= pwr_beam_env / area_nf
+# 	pwr_beam_env_tot 	= np.sum(pwr_beam_env)
+# 	area_ff 			= dxff * dyff
+# 	pwr_ff_tot      	= np.sum(int_ff * area_ff)
+# 	int_beam_env 		= pwr_beam_env / area_nf
 # making figures
-	int_ff_ideal_raw 	= int_beam_env
 	# FIGURE1_PHASE_INTENSITY = intensity_phase_plots((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), far_field_ideal, int_ff, dpp_phase)
-	ONLY_INTENSITY, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-																		int_ff_ideal_raw=int_ff_ideal_raw, int_ff_raw=int_ff,
-																		ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
-																		do_DPP=False, do_PS=False, plot_ssd=do_ssd, do_PS_SSD=True, ps_shift=10,
-																		do_line=True, do_LogNorm=False, do_ideal=True)
+	# ONLY_INTENSITY, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+	# 																	int_ff_ideal_raw=int_beam_env, int_ff_raw=int_ff, ideal_int_nf=use_prescribed_nf,
+	# 																	ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
+	# 																	do_DPP=False, do_PS=True, plot_ssd=do_ssd, do_PS_SSD=True, ps_shift=10,
+	# 																	do_line=True, do_LogNorm=False, do_ideal=True)
 	# fig = make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff,
 	# 				   dpp_phase, int_beam_env, int_ff, pwr_ff_tot, near_field,
 	# 				   cm, cm2, um)
 	#					x, y, data_array, plt_type, varname, norm
+	# DIGGER = make_plots((int_beam_env, 'ff', 'INT ENV NEW', 'log', 'line'), x, y, xff, yff, xnorm,nf_lim=None, ff_lim=None)
+	# FIGURE = make_plots(collection=[
+	# 	((sigma_rms_ssd, 'sigma_rms', f'sgma_rms\nssd_duration: {ssd_duration} s\nssd_time_resolution: {ssd_time_resolution}', 'log', 'line'),
+	# 				 ssd_timesteps, None, ssd_timesteps, (':', 'black', 'ssd only'), 'log', None, None),
+	# 	((sigma_rms_ssd_ps, 'sigma_rms', f'sgma_rms\nssd_duration: {ssd_duration} s\nssd_time_resolution: {ssd_time_resolution}', 'log', 'line'),
+	# 				 ssd_timesteps, None, ssd_timesteps, ('-', 'black', 'ssd with ps'), 'log', None, None)
+	# 				 ])
+					 
 # printing key results
-	var_list = [nx, dx, dxff, ny, dy, dyff,
-				area_nf, area_ff,
-				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
-				foc_len, Lambda,
-				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution]
+	# var_list = [nx, dx, dxff, ny, dy, dyff,
+	# 			area_nf, area_ff,
+	# 			int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
+	# 			foc_len, Lambda,
+	# 			nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution, ssd_duration]
 	print_function(var_list)
 	plt.show()
