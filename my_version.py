@@ -1,11 +1,11 @@
 #%%
-# import os
 # import netCDF4
 # import csv
 # import datetime
 # import pandas as pd
 # from matplotlib.animation import FuncAnimation
 # import matplotlib as mpl
+import os
 from scipy.io import loadmat
 from scipy.interpolate import RectBivariateSpline
 import scipy.optimize as sciop
@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import LogNorm
 from tqdm import tqdm
 import pandas as pd
-
+#%%
 def zcen(ar, axis=0):
 	"""
 	Computes zone-centered (cell-centered) values of an array along a given axis.
@@ -118,6 +118,29 @@ def util_compute_fft(near_field, do_abs_squared=True):
 	efield 		= np.abs(efield_ff)
 	if do_abs_squared: efield = efield**2
 	return efield
+def util_make_folder_of_intensity_distribution_files(int_ff, time, area_ff, beam_power):
+	int_ff		= util_scale_int_env(int_ff, area_ff, beam_power)
+	folder_path = "./Intensity_Distributions/"
+	if not os.path.exists(folder_path):
+		os.makedirs(folder_path)
+	ps 			= 1e-12
+	file_path 	= folder_path + f"Instantaneous intensity distribution at {time/ps:3.2}ps.txt"
+	rows, cols 	= np.shape(int_ff)
+	with open(file_path, "w") as file:
+		file.write("\t".join(str(a) for a in np.arange(cols)) + "\n")
+		for row in range(rows):
+			file.write("\t".join(str(val) for val in int_ff[row]) + "\n")
+	return
+def util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx:int,  scale_from_max:int, sigma_rms_ssd_all:list, sigma_rms_ssd_ps_all:list):
+	_, sigma_rms_ssd 	= quantify_nonuniformity(int_ideal_ff, int_ff_ssd / (idx + 1), sigma_rms_ssd_all[0], scale_from_maximum=scale_from_max)
+	_, sigma_rms_ssd_ps = quantify_nonuniformity(int_ideal_ff, int_ff_ssd_ps / (idx + 1), sigma_rms_ssd_ps_all[0], scale_from_maximum=scale_from_max)
+	sigma_rms_ssd_all	.append(sigma_rms_ssd)
+	sigma_rms_ssd_ps_all.append(sigma_rms_ssd_ps)
+	return (sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+def util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all):
+	with open("output.txt", "w") as file:
+		file.write(f"sigma_rms_ssd\tsigma_rms_ssd_ps\n")
+		file.writelines(f"{a}\t{b}\n" for a,b in zip(sigma_rms_ssd_all, sigma_rms_ssd_ps_all))
 def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None, area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, scale_from_max=2,
 						  x=None, y=None, time=None, time_resolution=None, write_to_file=False):
 	efield_beam_env			= np.exp(-1j) * np.exp(1j) * (int_beam_env)**0.5		#V/m    #proportionality relation. E field amplitude squared is proportional to intensity
@@ -131,23 +154,22 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		int_ff_onlyDPP	=  util_compute_fft(near_field)
 	if do_ssd:
 		int_ff_ssd, int_ff_ssd_ps		= np.zeros(np.shape(near_field)), np.zeros(np.shape(near_field))
+		timesteps 						= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 		sigma_rms_ssd_all				= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
 		sigma_rms_ssd_ps_all			= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
 		for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
-			E_near_field=near_field, x_mesh=x, y_mesh=y, time=time, time_resolution=time_resolution, use_gen=True
+			E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
 			)), desc="Applying smoothing by spectral dispersion smoothing"):
-			int_ff				= util_compute_fft(near_field)
-			int_ff				= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
-			int_ff_ssd			+= int_ff
-			int_ff_ssd_ps		= apply_polarisation_smoothing(int_ff_ssd)
-			_, sigma_rms_ssd 	= quantify_nonuniformity(int_ideal_ff, int_ff_ssd / (idx + 1), sigma_rms_ssd_all[0], scale_from_maximum=scale_from_max)
-			_, sigma_rms_ssd_ps = quantify_nonuniformity(int_ideal_ff, int_ff_ssd_ps / (idx + 1), sigma_rms_ssd_ps_all[0], scale_from_maximum=scale_from_max)
-			sigma_rms_ssd_all	.append(sigma_rms_ssd)
-			sigma_rms_ssd_ps_all.append(sigma_rms_ssd_ps)
-		if write_to_file:
-			with open("output.txt", "w") as file:
-				file.write(f"sigma_rms_ssd\tsigma_rms_ssd_ps\n")
-				file.writelines(f"{a}\t{b}\n" for a,b in zip(sigma_rms_ssd_all, sigma_rms_ssd_ps_all))
+			int_ff										= util_compute_fft(near_field)
+			int_ff										= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
+			int_ff_ssd									+= int_ff
+			int_ff_ssd_ps								= apply_polarisation_smoothing(int_ff_ssd)
+			# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
+			# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+			if write_to_file:
+				util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx], area_ff, beam_power)
+		# if write_to_file:
+		# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
 		sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
 		sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
 		int_ff					= int_ff_ssd / time_resolution
@@ -297,8 +319,7 @@ def util_phase_modulation_eqn(x, y, t):
 	phi_2D_ssd 			= 3 * delta_x*np.sin(omega_x * (t + zeta_x * x)) + 3 * delta_y*np.sin(omega_y * (t + zeta_y * y)) # equation (3) from Regan et. all (2005)
 	phi 				+= phi_2D_ssd
 	return phi
-def apply_smoothing_by_spectral_dispersion(E_near_field, time, x_mesh, y_mesh, time_resolution, use_gen=True):
-	timesteps 			= [i*(time / time_resolution) for i in range(1, time_resolution)] # dividing the total time into discrete steps
+def apply_smoothing_by_spectral_dispersion(E_near_field, x_mesh, y_mesh, timesteps, time_resolution, use_gen=True):
 	rows, cols 			= np.shape(E_near_field)
 	E_near_field_ssd 	= np.zeros((rows,cols), dtype=complex)
 	if not use_gen:
@@ -308,23 +329,6 @@ def apply_smoothing_by_spectral_dispersion(E_near_field, time, x_mesh, y_mesh, t
 	else:
 		for pos, timestep in enumerate(timesteps):
 			yield E_near_field * np.exp(1j * util_phase_modulation_eqn(x_mesh, y_mesh, timestep))
-def apply_smoothing_by_spectral_dispersion_new(E_near_field, time, x_mesh, y_mesh, time_resolution):
-	timesteps 	= np.array([i*(time / time_resolution) for i in range(time_resolution)]) # dividing the total time into discrete steps
-	t_grid		= timesteps[:, None, None]
-# SSD
-	TWO_PI 				= 2*np.pi
-	delta_x, delta_y 	= 14.3, 6.15 			# no units; the modulation depth
-	v_x, v_y			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency 
-	omega_x, omega_y 	= TWO_PI*v_x, TWO_PI*v_y# rads/s; angular rf modulation frequency
-	zeta_x, zeta_y		= 0.300e-9, 1.13e-9		#s/m; describes the variation in phase across the beam due to the angular grating dispersion
-# computing phase array for all time values (3D)
-	phi_2d_ssd = (
-		3 * delta_x*np.sin(omega_x * (t_grid + zeta_x * x)) +
-		3 * delta_y*np.sin(omega_y * (t_grid + zeta_y * y)) # equation (3) from Regan et. all (2005)
-	)
-# Computing the ssd near field as a 3D array and taking average
-	E_near_field_ssd = np.mean(E_near_field * np.exp(1j * phi_2d_ssd), axis=0)
-	return E_near_field_ssd
 def util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw):
 	x, dx 			= nf_x
 	xff, dxff 		= ff_x
@@ -334,7 +338,6 @@ def util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_f
 	int_ff_ideal 	= int_ff_ideal_raw / peak_int_ideal			# relative intensity found when we divide by peak intensity
 	# peak_int_ideal *= (dx * dy) / (dxff * dyff)				# scaling to far field
 	int_ff = int_ff_raw / peak_int_ideal
-
 	return x, xff, y, yff, int_ff_ideal, int_ff
 def util_img_plot(fig, ax, x, y, data, attributes, show_cb=True):
 	"""
@@ -483,6 +486,19 @@ def util_add_line_items(field, data_tuple, tuple_design, line_design: list):
 	data_tuple += (field,)
 	line_design.append(tuple_design)
 	return data_tuple, line_design
+def util_make_ideal_ff_using_curvefit(xff, yff, int_ff_ssd, int_ff_DPP_and_PS, int_ff_onlyDPP, scale_from_max):
+	cords 	= np.meshgrid(xff, yff)
+	p0		= [1, 358e-4*cm, 2]
+	bounds 	= ([0, 1e-5, 1], [3, 1e-3, 8])
+	ssd_pobv, _ 		= sciop.curve_fit(super_gaussian, cords, int_ff_ssd.ravel(), p0, bounds=bounds)
+	ideal_fit_ssd		= super_gaussian(cords, ssd_pobv[0], ssd_pobv[1], ssd_pobv[2],).reshape(np.shape(int_ff_ssd))
+	ssd_ps_pobv, _ 		= sciop.curve_fit(super_gaussian, cords, int_ff_DPP_and_PS.ravel(), p0)
+	ideal_fit_ssd_ps	= super_gaussian(cords,ssd_ps_pobv[0], ssd_ps_pobv[1], ssd_ps_pobv[2]).reshape(np.shape(int_ff_ssd))
+	_, sigma_0_ssd		= quantify_nonuniformity(ideal_fit_ssd, int_ff_onlyDPP, scale_from_maximum=scale_from_max)
+	_, sigma_0_ssd_ps	= quantify_nonuniformity(ideal_fit_ssd_ps, int_ff_onlyDPP, scale_from_maximum=scale_from_max)
+	# data_to_plot, plt_attributes = util_add_plot_items(data_to_plot, ff_data + (ideal_fit_ssd,), plt_attributes, ff_attribute + ("IDEAL INT SSD",))
+	# data_to_plot, plt_attributes = util_add_plot_items(data_to_plot, ff_data + (ideal_fit_ssd_ps,), plt_attributes, ff_attribute + ("IDEAL INT SSD_with_PS",))
+	return ideal_fit_ssd, ideal_fit_ssd_ps, sigma_0_ssd, sigma_0_ssd_ps
 def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ideal_int_nf=True,
 					   ssd_data_items=None, do_ideal=True, do_DPP=True, do_PS=False, do_PS_SSD=False, ps_shift=4,
 					   do_LogNorm=False, do_line=False, plot_ssd=False, return_fig=True, use_sciop=False, scale_from_max=2):
@@ -519,24 +535,14 @@ def intensity_plot_old(nf_x, ff_x, nf_y, ff_y, int_ff_ideal_raw, int_ff_raw, ide
 		plt_attributes			.append(ff_attribute+ (plot_name,))
 	else: use_sciop = False
 	if use_sciop:
-		cords 	= np.meshgrid(xff, yff)
-		p0		= [1, 358e-4*cm, 2]
-		bounds 	= ([0, 1e-5, 1], [3, 1e-3, 8])
-		ssd_pobv, _ 		= sciop.curve_fit(super_gaussian, cords, int_ff_ssd.ravel(), p0, bounds=bounds)
-		ideal_fit_ssd		= super_gaussian(cords, ssd_pobv[0], ssd_pobv[1], ssd_pobv[2],).reshape(np.shape(int_ff_ssd))
-		ssd_ps_pobv, _ 		= sciop.curve_fit(super_gaussian, cords, int_ff_DPP_and_PS.ravel(), p0)
-		ideal_fit_ssd_ps	= super_gaussian(cords,ssd_ps_pobv[0], ssd_ps_pobv[1], ssd_ps_pobv[2]).reshape(np.shape(int_ff_ssd))
-		_, sigma_0_ssd		= quantify_nonuniformity(ideal_fit_ssd, int_ff_onlyDPP, scale_from_maximum=scale_from_max)
-		_, sigma_0_ssd_ps	= quantify_nonuniformity(ideal_fit_ssd_ps, int_ff_onlyDPP, scale_from_maximum=scale_from_max)
-		# data_to_plot, plt_attributes = util_add_plot_items(data_to_plot, ff_data + (ideal_fit_ssd,), plt_attributes, ff_attribute + ("IDEAL INT SSD",))
-		# data_to_plot, plt_attributes = util_add_plot_items(data_to_plot, ff_data + (ideal_fit_ssd_ps,), plt_attributes, ff_attribute + ("IDEAL INT SSD_with_PS",))
+		ideal_fit_ssd, ideal_fit_ssd_ps, sigma_0_ssd, sigma_0_ssd_ps = util_make_ideal_ff_using_curvefit(xff, yff, int_ff_ssd, int_ff_DPP_and_PS, int_ff_onlyDPP, scale_from_max)
 	else:
 		ideal_fit_ssd 		= int_ff_ideal
 		ideal_fit_ssd_ps 	= int_ff_ideal
 		_, sigma_0_ssd		= quantify_nonuniformity(ideal_fit_ssd, int_ff_onlyDPP, scale_from_maximum=scale_from_max)
 		sigma_0_ssd_ps		= sigma_0_ssd
 	if do_line:
-		center 							= int(np.ceil(len(int_ff[0,:]) * 0.5))
+		center 							= int(np.ceil(len(int_ff_ideal[0,:]) * 0.5))
 		data_lines, line_designs		= util_add_line_items(int_ff_ideal[center], (), ('--', 'red', 'Ideal lineshape'), [])
 		mask_fwhm						= np.isclose(int_ff_ideal[center], np.max(int_ff_ideal[center]) / scale_from_max, rtol=0.005)
 		data_lines, line_designs		= util_add_line_items(mask_fwhm, data_lines, ('--', 'purple', 'cutoff'), line_designs)
@@ -709,7 +715,7 @@ def make_plots(collection, scatter=False, do_top_edge=False, top_items=(None,Non
 		elif plt_type 	== 'line'	: util_line_plot(ax, x, y, data_array, attribute, xnorm=xnorm, do_scatter=scatter, do_top_edge=do_top_edge, top_items=top_items, show_legend=show_legend)
 		if type(collection[-1]) != tuple: break
 	return fig
-def plot_moving_speckels(int_beam_env,dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, nf_lim=14, ff_lim=100, img_norm=None):
+def plot_moving_speckels(int_beam_env,dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None):
 	plt.ion()		
 	fig, ax			= plt.subplots()
 	# fig, ax			= plt.subplots(nrows=2, ncols=1)
@@ -720,21 +726,21 @@ def plot_moving_speckels(int_beam_env,dpp_phase, nf_x, ff_x, nf_y, ff_y, time, t
 # applying ssd and finding far field intensity distribution
 	dpp				= np.exp(1j * dpp_phase)					# complex number of unit modulus. Product simply changes phase
 	near_field		*= dpp										# apply DPP phase modulation
-	int_ff_onlyDPP	=  util_compute_fft(near_field)
-	_, _, _, _, int_ideal, int_ff_dpp		= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
+	int_ff_onlyDPP	= util_compute_fft(near_field)
+	int_ff_onlyDPP 	= util_scale_int_env(int_beam_env=int_ff_onlyDPP, area=area_ff, beam_power=beam_power)
+	_, _, _, _, int_ideal, int_ff_onlyDPP		= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
 													int_beam_env, int_ff_onlyDPP)
-	# util_img_plot(fig, ax[0], nf_x[0], nf_y[0], int_ideal, nf_attribute)
-	pcm				= util_img_plot(fig, ax, x, y, int_ff_dpp, ff_attribute)
-	int_ff_ssd		= np.zeros(np.shape(near_field))
+	pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
+	timesteps 		= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 	for timestep, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
-		E_near_field=near_field, x_mesh=x, y_mesh=y, time=time, time_resolution=time_resolution, use_gen=True
+		E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
 		)), desc="Applying smoothing by spectral dispersion smoothing"):
-		int_ff_ssd	+= util_compute_fft(near_field)
-		_, _, _, _, _, int_ff_ssd_plot	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
-														int_beam_env, int_ff_ssd / timestep)
-		plt.pause(0.001)
-
-		pcm.set_array(int_ff_ssd / (timestep + 1))
+		int_ff_ssd_instantaneous				= util_compute_fft(near_field)
+		int_ff_ssd_instantaneous				= util_scale_int_env(int_beam_env=int_ff_ssd_instantaneous, area=area_ff, beam_power=beam_power)
+		_, _, _, _, _, int_ff_ssd_instantaneous	= util_find_relative_intensity(nf_x, ff_x, nf_y, ff_y,
+														int_beam_env, int_ff_ssd_instantaneous)
+		plt.pause(1)
+		pcm.set_array(int_ff_ssd_instantaneous)
 		fig.canvas.draw()
 	return
 def util_shift_2_pi(phase_array, TWO_PI):
@@ -833,7 +839,7 @@ if __name__ == "__main__":
 	int_beam_env_nf								= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
 	expandGrids = True
-	scale_factor								= 3
+	scale_factor								= 2
 	if expandGrids:
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
@@ -849,8 +855,8 @@ if __name__ == "__main__":
 	scale_from_maximum							= 1.1
 #%%
 # applying ssd
-	do_ssd				= True
-	ssd_time_resolution	= 1
+	do_ssd				= False
+	ssd_time_resolution	= 500
 	ssd_duration		= 1e-9
 	ssd_timesteps		= np.array([i*(ssd_duration / ssd_time_resolution) for i in range(ssd_time_resolution)])
 	int_ff_ssd, _, _, sigma_rms_ssd, sigma_rms_ssd_ps = perform_fft_normalize(int_beam_env=int_beam_env, beam_power=beam_power,area_nf=area_nf, area_ff=area_ff,
@@ -904,9 +910,9 @@ if __name__ == "__main__":
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	# plot_moving_speckels(int_beam_env=int_beam_env, dpp_phase=dpp_phase,
-	# 				  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-	# 				  time=1e-9, time_resolution=10, ff_lim=400,img_norm='linear')
+	plot_moving_speckels(int_beam_env=int_beam_env, dpp_phase=dpp_phase,
+					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+					  time=1e-9, time_resolution=100, area_ff=area_ff, beam_power=beam_power, ff_lim=10, img_norm='linear')
 # printing key results
 	# var_list = [nx, dx, dxff, ny, dy, dyff,
 	# 			area_nf, area_ff,
@@ -915,8 +921,7 @@ if __name__ == "__main__":
 	# 			nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution, ssd_duration]
 	# print_function(var_list)
 	# plt.tight_layout()
-	# plt.show()
+	plt.show()
 
 #%%
-
 #%%
