@@ -162,13 +162,6 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 		sigma_rms_ssd_all	= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
 		sigma_rms_ssd_ps_all= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
-		if write_to_file:
-			int_ff		= util_scale_int_env(int_ff, area_ff, beam_power)
-			fig, ax			= plt.subplots()
-								#('img','x (um)', 'y (um)', img_norm, ff_lim, ff_lim, um, um, '')
-			um=1e-6
-			ff_attribute	= ('img','x (um)', 'y (um)', 'log', 20, 20, um, um, '')				
-			pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
 		for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
 			E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
 			)), desc="Applying smoothing by spectral dispersion smoothing"):
@@ -179,13 +172,6 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 			# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
 			# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
 			if write_to_file:
-				int_ff		= util_scale_int_env(int_ff, area_ff, beam_power)
-				fig, ax			= plt.subplots()
-									#('img','x (um)', 'y (um)', img_norm, ff_lim, ff_lim, um, um, '')
-				um=1e-6
-				ff_attribute	= ('img','x (um)', 'y (um)', 'log', 20, 20, um, um, '')				
-				pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
-				timesteps 		= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 				util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx])
 		# if write_to_file:
 		# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
@@ -754,7 +740,7 @@ def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timestep
 		pcm.set_array(int_ff_display)
 		ax.set_title(f"Timestep: {timesteps[idx] / (1e-12):.2f}ps")
 		yield fig, ax
-def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None, do_cumulative=False, make_movie=False):
+def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None, do_cumulative=False, make_movie=False, fps=1):
 	if not make_movie:
 		plt.ion()
 	else:
@@ -779,57 +765,22 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 		if not os.path.exists(folder_path):
 			os.makedirs(folder_path)
 		# --- Movie writer setup ---
-		writer = FFMpegWriter(fps=1, bitrate=1800)
+		writer = FFMpegWriter(fps=fps, bitrate=1800)
 		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.0f}ps_{ff_lim*2}micron-grid.mp4"
 		with writer.saving(fig, movie_name, dpi=100):
 			for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
 											  pcm, fig, ax, area_ff, beam_power,
-											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(x,y)):
+											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(nf_x[0],nf_y[0])):
 				fig.canvas.draw()
 				writer.grab_frame()
 		plt.close(fig)
 	else:
 		for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
 											  pcm, fig, ax, area_ff, beam_power,
-											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(x,y), do_cumulative=do_cumulative):
+											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(nf_x[0],nf_y[0]), do_cumulative=do_cumulative):
 				plt.pause(0.01)
 				fig.canvas.draw()
 	return
-def plot_moving_speckels_new(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None, do_cumulative=False, make_movie=False):
-	if not make_movie:
-		plt.ion()
-	else:
-		plt.ioff()	
-	fig, ax			= plt.subplots()
-	# fig, ax			= plt.subplots(nrows=2, ncols=1)
-	ff_attribute	= ('img','x (um)', 'y (um)', img_norm, ff_lim, ff_lim, um, um, '')
-	nf_attribute	= ('img','x (cm)', 'y (cm)', img_norm, nf_lim, nf_lim, cm, cm, '')
-	x, y = ff_x[0], ff_y[0]
-
-	pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
-	timesteps 		= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
-	if make_movie:
-		folder_path = "./Movies_Instantaneous_IntDist/"
-		if not os.path.exists(folder_path):
-			os.makedirs(folder_path)
-		# --- Movie writer setup ---
-		writer = FFMpegWriter(fps=1, bitrate=1800)
-		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.0f}ps_{ff_lim*2}micron-grid.mp4"
-		with writer.saving(fig, movie_name, dpi=100):
-			for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-											  pcm, fig, ax, area_ff, beam_power,
-											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(x,y)):
-				fig.canvas.draw()
-				writer.grab_frame()
-		plt.close(fig)
-	else:
-		for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-											  pcm, fig, ax, area_ff, beam_power,
-											  nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(x,y), do_cumulative=do_cumulative):
-				plt.pause(0.01)
-				fig.canvas.draw()
-	return
-
 def util_shift_2_pi(phase_array, TWO_PI):
 	make_periodic 						= np.copy(phase_array)
 	if np.any(make_periodic 			> TWO_PI):
@@ -926,7 +877,7 @@ if __name__ == "__main__":
 	int_beam_env_nf								= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
 	expandGrids = True
-	scale_factor								= 3
+	scale_factor								= 2
 	if expandGrids:
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
@@ -999,8 +950,8 @@ if __name__ == "__main__":
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
 	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-					  time=8e-10, time_resolution=80, area_ff=area_ff, beam_power=beam_power,
-					  ff_lim=7, img_norm='linear', do_cumulative=True, make_movie=False)
+					  time=1e-9, time_resolution=100, area_ff=area_ff, beam_power=beam_power,
+					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=False, fps=2)
 # printing key results
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
