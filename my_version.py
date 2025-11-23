@@ -317,7 +317,7 @@ def util_phase_modulation_eqn(x, y, t):
 # B integral
 # SSD
 	delta_x, delta_y 	= 14.3, 6.15 			# no units; the modulation depth
-	v_x, v_y			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency 
+	v_y, v_x			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency 
 	omega_x, omega_y 	= TWO_PI*v_x, TWO_PI*v_y# rads/s; angular rf modulation frequency
 	zeta_x, zeta_y		= 0.300e-9, 1.13e-9		#s/m; describes the variation in phase across the beam due to the angular grating dispersion
 	phi_2D_ssd 			= 3 * delta_x*np.sin(omega_x * (t + zeta_x * x)) + 3 * delta_y*np.sin(omega_y * (t + zeta_y * y)) # equation (3) from Regan et. all (2005)
@@ -766,7 +766,7 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 			os.makedirs(folder_path)
 		# --- Movie writer setup ---
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
-		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.0f}ps_{ff_lim*2}micron-grid.mp4"
+		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.2f}ps_{ff_lim*2}micron-grid.mp4"
 		with writer.saving(fig, movie_name, dpi=100):
 			for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
 											  pcm, fig, ax, area_ff, beam_power,
@@ -865,7 +865,7 @@ if __name__ == "__main__":
 	nx_, dx_, ny_, dy_, x1d_, y1d_, (x_,y_) = create_2D_grids(KesslerParms, resolution_fac=res_fac) # fine grid for high-res interpolation
 	phase_func   							= RectBivariateSpline(x1d,y1d,dpp_phase)				# interpolate the phase array from the phase plate
 	dpp_phase    							= phase_func(x1d_,y1d_)
-	use_periodic_phase 						= False
+	use_periodic_phase 						= True
 	if use_periodic_phase:
 		dpp_phase = make_periodic_phase(dpp_phase)
 	nx, dx, x1d, ny, dy, y1d, (x,y), res_fac_pr = nx_, dx_, x1d_, ny_, dy_, y1d_, (x_,y_), res_fac
@@ -876,8 +876,8 @@ if __name__ == "__main__":
 																   cords=(x,y), N=24/2)											# Beam intensity envelope at lens
 	int_beam_env_nf								= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
-	expandGrids = True
-	scale_factor								= 2
+	expandGrids = False
+	scale_factor								= 3
 	if expandGrids:
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
@@ -950,8 +950,8 @@ if __name__ == "__main__":
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
 	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-					  time=1e-9, time_resolution=100, area_ff=area_ff, beam_power=beam_power,
-					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=False, fps=2)
+					  time=1e-10, time_resolution=20, area_ff=area_ff, beam_power=beam_power,
+					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=1)
 # printing key results
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
