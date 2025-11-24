@@ -739,12 +739,17 @@ def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timestep
 		ax.set_title(f"Timestep: {timesteps[idx] / (1e-12):.2f}ps")
 		
 		#show com
+		positions = [-100, -50, 0, 50, 100]
+		pos	= positions[idx % len(positions)]
+		colours = ["white", "red", "green", "yellow", "pink"]
+		colour	= colours[idx % len(colours)]
 		if show_com:
 			xff, yff		= ff_x[0], ff_y[0]
 			com_x, com_y	= find_com_arr(xff, int_ff_display), find_com_arr(yff, int_ff_display)
-			point_artist	.set_data([com_x], [com_y])
-			with open(f"temp_centre_of_intensity_coords.txt", "a") as file:
-				file.write(f"timestep\t{timesteps[idx] / (1e-12):.2f}ps:\tcoords of centre of intensity:\t({com_x /(um):.2f}um, {com_y/(um):.2f}um)\n")
+			point_artist.set_data([pos], [pos])
+			point_artist.set_markerfacecolor(colour)
+			# with open(f"temp_centre_of_intensity_coords.txt", "a") as file:
+			# 	file.write(f"timestep\t{timesteps[idx] / (1e-12):.2f}ps:\tcoords of centre of intensity:\t({com_x /(um):.2f}um, {com_y/(um):.2f}um)\n")
 		yield fig, ax
 def util_loop_pms(args: tuple, show_com=False):
 	(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
@@ -755,8 +760,8 @@ def util_loop_pms(args: tuple, show_com=False):
 										nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(nf_x[0],nf_y[0]),
 										do_cumulative=do_cumulative, show_com=show_com):
 		if pause: plt.pause(pause)
-		fig.canvas.draw()
 		if writer is not None: writer.grab_frame()
+		fig.canvas.draw()
 	return
 def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None, do_cumulative=False, make_movie=False, fps=1, show_com=False):
 	if not make_movie:
@@ -778,8 +783,8 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 													int_ff_env, int_ff_onlyDPP)
 	pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
 	if show_com:
-			xff, yff		= ff_x[0], ff_y[0]
-			com_x, com_y	= find_com_arr(xff, int_ff_onlyDPP), find_com_arr(yff, int_ff_onlyDPP)
+			# xff, yff		= ff_x[0], ff_y[0]
+			com_x, com_y	= 100, -100#find_com_arr(xff, int_ff_onlyDPP), find_com_arr(yff, int_ff_onlyDPP)
 			point_artist,	= ax.plot(com_x, com_y, marker='s', color='red', markersize=5)
 	else: point_artist=None
 	timesteps 		= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
