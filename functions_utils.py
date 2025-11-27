@@ -10,6 +10,7 @@ from scipy.io import loadmat
 from scipy.interpolate import RectBivariateSpline
 import scipy.optimize as sciop
 import numpy as np
+from typing import List
 
 from matplotlib import pyplot as plt
 from matplotlib.animation import FFMpegWriter
@@ -327,7 +328,7 @@ def util_phase_modulation_eqn(x, y, t):
 # B integral
 # SSD
 	delta_x, delta_y 	= 14.3, 6.15 			# no units; the modulation depth
-	v_y, v_x			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency 
+	v_y, v_x			= 10.4e9, 3.30e9		# Hz; the rf modulation frequency
 	omega_x, omega_y 	= TWO_PI*v_x, TWO_PI*v_y# rads/s; angular rf modulation frequency
 	zeta_x, zeta_y		= 0.300e-9, 1.13e-9		#s/m; describes the variation in phase across the beam due to the angular grating dispersion
 	phi_2D_ssd 			= 3 * delta_x*np.sin(omega_x * (t + zeta_x * x)) + 3 * delta_y*np.sin(omega_y * (t + zeta_y * y)) # equation (3) from Regan et. all (2005)
@@ -705,17 +706,27 @@ def make_plots(collection, scatter=False, do_top_edge=False, top_items=(None,Non
 		elif plt_type 	== 'line'	: util_line_plot(ax, x, y, data_array, attribute, xnorm=xnorm, do_scatter=scatter, do_top_edge=do_top_edge, top_items=top_items, show_legend=show_legend)
 		if type(collection[-1]) != tuple: break
 	return fig
-def find_com_arr(direction, array):
-	sum_product		= np.sum(direction * array)
-	sum_arr			= np.sum(array)
-	com_pos			= sum_product / sum_arr
-	return com_pos
+def find_com_arr(direction_mesh: List[List[np.float64]], array: List[List[np.float64]], direction: str) -> np.float64:
+	"""Assumes all arrays are square arrays"""
+	avg_total	= 0
+	if direction == "x":
+		for idx, row in enumerate(direction_mesh):
+			val			= array[idx]
+			avg_total	+= np.sum(row * val) / np.sum(val)
+		length	= len(row)
+	elif direction == "y":
+		for idx, col in enumerate(direction_mesh.T):
+			val			= array.T[idx]
+			avg_total	+= np.sum(col * val) / np.sum(val)
+		length	= len(col)
+	com_pos		= avg_total / length 
+	return com_pos  
 def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, pcm, point_artist, fig, ax, area_ff, beam_power, nf, ff, coords, do_cumulative=False, show_com=False):
-	nf_x, nf_y	= nf
-	ff_x, ff_y	= ff
-	x,y			= coords
+	nf_x, nf_y			= nf
+	ff_x, ff_y			= ff
+	x,y					= coords
+	xff_mesh, yff_mesh	= np.meshgrid(ff_x[0], ff_y[0])
 	int_ff_cumulative = np.zeros_like(near_field, dtype=float)
-
 	for idx, near_field_t in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
 		E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
 	)), desc="Applying smoothing by spectral dispersion smoothing"):
@@ -739,17 +750,11 @@ def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timestep
 		ax.set_title(f"Timestep: {timesteps[idx] / (1e-12):.2f}ps")
 		
 		#show com
-		positions = [-100, -50, 0, 50, 100]
-		pos	= positions[idx % len(positions)]
-		colours = ["white", "red", "green", "yellow", "pink"]
-		colour	= colours[idx % len(colours)]
 		if show_com:
-			xff, yff		= ff_x[0], ff_y[0]
-			com_x, com_y	= find_com_arr(xff, int_ff_display), find_com_arr(yff, int_ff_display)
-			point_artist.set_data([pos], [pos])
-			point_artist.set_markerfacecolor(colour)
-			# with open(f"temp_centre_of_intensity_coords.txt", "a") as file:
-			# 	file.write(f"timestep\t{timesteps[idx] / (1e-12):.2f}ps:\tcoords of centre of intensity:\t({com_x /(um):.2f}um, {com_y/(um):.2f}um)\n")
+			com_x, com_y	= find_com_arr(xff_mesh, int_ff_display, direction="x"), find_com_arr(yff_mesh, int_ff_display, direction="y")
+			point_artist.set_data([com_x / um], [com_y / um])
+			with open(f"temp_centre_of_intensity_coords.txt", "a") as file:
+				file.write(f"timestep\t{timesteps[idx] / (1e-12):.2f}ps:\tcoords of centre of intensity:\t({com_x /(um):.2f}um, {com_y/(um):.2f}um)\n")
 		yield fig, ax
 def util_loop_pms(args: tuple, show_com=False):
 	(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
@@ -783,9 +788,9 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 													int_ff_env, int_ff_onlyDPP)
 	pcm				= util_img_plot(fig, ax, x, y, int_ff_onlyDPP, ff_attribute)
 	if show_com:
-			# xff, yff		= ff_x[0], ff_y[0]
-			com_x, com_y	= 100, -100#find_com_arr(xff, int_ff_onlyDPP), find_com_arr(yff, int_ff_onlyDPP)
-			point_artist,	= ax.plot(com_x, com_y, marker='s', color='red', markersize=5)
+			xff_mesh, yff_mesh		= np.meshgrid(ff_x[0], ff_y[0])
+			com_x, com_y			= find_com_arr(xff_mesh, int_ff_onlyDPP, direction="x"), find_com_arr(yff_mesh, int_ff_onlyDPP, direction="y")
+			point_artist,			= ax.plot(com_x, com_y, marker='s', color='red', markersize=5)
 	else: point_artist=None
 	timesteps 		= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 	if make_movie:
@@ -795,7 +800,7 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 		# --- Movie writer setup ---
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
 		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.2f}ps_{ff_lim*2}micron-grid.mp4"
-		with writer.saving(fig, movie_name, dpi=100):
+		with writer.saving(fig, movie_name, dpi=200):
 			util_loop_pms(args=(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
 				 pcm, point_artist, fig, ax, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
 				 do_cumulative, writer, None), show_com=show_com)

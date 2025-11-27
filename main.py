@@ -48,7 +48,7 @@ if __name__ == "__main__":
 	int_beam_env_nf								= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
 	expandGrids = True
-	scale_factor								= 3
+	scale_factor								= 2
 	if expandGrids:
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
@@ -121,8 +121,8 @@ if __name__ == "__main__":
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
 	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-					  time=2e-10, time_resolution=100, area_ff=area_ff, beam_power=beam_power,
-					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=2, show_com=True)
+					  time=4e-10, time_resolution=400, area_ff=area_ff, beam_power=beam_power,
+					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=4, show_com=True)
 # printing key results
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
