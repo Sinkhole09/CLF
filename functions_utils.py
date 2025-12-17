@@ -101,6 +101,26 @@ def beam_envelope(cords, N, amp=1, alpha=1, sigma=1, super_g_x_zero=1, super_g_y
 		) ** N
 	) #Beam intensity envelope at lens
 	return envelope
+def util_electric_field_component(amp, freq, time):
+	return amp * np.exp(-1j * freq * time)
+def util_1D_gaussian(x, mean, sigma):
+	normalize_factor	= 1/(sigma * np.sqrt(2*np.pi))
+	exponent			= np.exp(-0.5* ( (x - mean) / sigma) ** 2)
+	return normalize_factor * exponent
+def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_ntensity, int_beam_env):
+	# creating the range of spectral components
+	stds_covered	= 2
+	frequencies		= np.linspace(
+		carrier_freq - stds_covered*bandwidth,	# stat
+		carrier_freq + stds_covered*bandwidth,	# end
+		bins									# number of spectral components
+		)
+	amplitudes		= [np.sqrt(total_nf_ntensity / bins) for _ in range(bins)] # all spectral components have equal amplitude.
+	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
+	for component, frequency in enumerate(frequencies):
+		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
+		electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
+	return electric_field, frequencies
 def create_2D_grids(KesslerParms, resolution_fac=1, scale_factor=1):
 	nx	= KesslerParms.fftCells_x * resolution_fac  # Number of pixels in the x-direction in the FFT grid (simulated near-field image)
 	dx  = KesslerParms.nfPixSize_x / resolution_fac # Size of each pixel in x-direction at the near-field plane (where FFT is evaluated); I guess in meters?
@@ -157,7 +177,69 @@ def util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all):
 	with open("output.txt", "w") as file:
 		file.write(f"sigma_rms_ssd\tsigma_rms_ssd_ps\n")
 		file.writelines(f"{a}\t{b}\n" for a,b in zip(sigma_rms_ssd_all, sigma_rms_ssd_ps_all))
-def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None, area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, scale_from_max=2,
+def util_perform_ssd(x, y, time, time_resolution, near_field, int_ideal_ff, int_ff_onlyDPP, scale_from_max, area_ff, beam_power, write_to_file):
+	int_ff_ssd			= np.zeros(np.shape(near_field))
+	timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
+	sigma_rms_ssd_all	= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
+	sigma_rms_ssd_ps_all= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
+	for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
+		E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
+		)), desc="Applying smoothing by spectral dispersion smoothing"):
+		int_ff										= util_compute_fft(near_field)
+		int_ff										= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
+		int_ff_ssd									+= int_ff
+		int_ff_ssd_ps								= apply_polarisation_smoothing(int_ff_ssd)
+		# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
+		# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+		if write_to_file:
+			util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx])
+	# if write_to_file:
+	# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+	sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
+	sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
+	int_ff					= int_ff_ssd / time_resolution
+	return int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
+def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
+	t_cycle			= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
+	random_delay	= np.random.randint(low=coherence_time / t_cycle) * t_cycle
+	return i * j * (coherence_time + random_delay)
+def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
+					 time, time_resolution, bandwidth, carrier_freq, dpp, do_dpp=False,
+					 bins=5, echelon_block_width=1, sf=None):
+	# creating echelon time_delays
+	tc					= 2*np.pi / bandwidth	# coherence time
+	rows, cols			= np.shape(x)
+	if sf is not None:
+		rows = int(rows / sf)
+		cols = int(cols / sf)
+	i, j				= np.arange(rows)[:, None], np.arange(cols)[None, :]
+	I_block, J_block	= i // echelon_block_width, j // echelon_block_width # performing element-wise integer(floor) division
+							# i and I_block have the same shape and same number of elements.
+	echelon_delays		= util_echelon_time_delay(I_block, J_block, coherence_time=tc, carrier_freq=carrier_freq)
+	if sf is not None:
+		echelon_delays	= expand_grid(echelon_delays, scale_factor=sf)
+		rows *= sf
+		cols *= sf
+	# computing far field intensity for each timestep
+	timesteps			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
+	int_ff_isi			= np.zeros((rows, cols))
+	int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
+	for timestep in tqdm(timesteps, desc="Applying isi"):
+		electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
+							carrier_freq, bandwidth,
+							time=echelon_delays + timestep, bins=bins,
+							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
+		int_ff_component	= np.zeros((rows, cols))
+		for near_field in electric_fields: # each spectral component (num of spectral components is bins)
+			if do_dpp:	# applying the phase plate
+				near_field *= dpp
+			int_ff				= util_compute_fft(near_field, True)
+			int_ff_component	+= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power / bins)
+		int_ff_isi				+= int_ff_component
+	return int_ff_isi / time_resolution
+def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None,
+						  area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, scale_from_max=2,
+						  do_isi=False, bandwidth=None, carrier_freq=None, echelon_block_width=64, sf=None,
 						  x=None, y=None, time=None, time_resolution=None, write_to_file=False):
 	near_field		= np.exp(-1j) * np.exp(1j) * (int_beam_env)**0.5		#V/m    #proportionality relation. E field amplitude squared is proportional to intensity
 # idealised far field intensity distribution (fft before phase plate or smoothing)
@@ -169,29 +251,16 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		int_ff_onlyDPP	= util_compute_fft(near_field)
 		int_ff_onlyDPP	= util_scale_int_env(int_ff_onlyDPP, area_ff, beam_power)
 	if do_ssd:
-		int_ff_ssd			= np.zeros(np.shape(near_field))
-		timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
-		sigma_rms_ssd_all	= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
-		sigma_rms_ssd_ps_all= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
-		for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
-			E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
-			)), desc="Applying smoothing by spectral dispersion smoothing"):
-			int_ff										= util_compute_fft(near_field)
-			int_ff										= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
-			int_ff_ssd									+= int_ff
-			int_ff_ssd_ps								= apply_polarisation_smoothing(int_ff_ssd)
-			# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
-			# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
-			if write_to_file:
-				util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx])
-		# if write_to_file:
-		# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
-		sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
-		sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
-		int_ff					= int_ff_ssd / time_resolution
+		int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all	= util_perform_ssd(x, y, time, time_resolution,
+																	 near_field, int_ideal_ff, int_ff_onlyDPP,
+																	 scale_from_max, area_ff, beam_power, write_to_file)
 	else:
 		int_ff 									= util_compute_fft(near_field)
 		sigma_rms_ssd_all, sigma_rms_ssd_ps_all = None, None
+	if do_isi:
+		int_ff	= util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
+							time, time_resolution, bandwidth, carrier_freq,
+							dpp, do_dpp=do_dpp, echelon_block_width=echelon_block_width, sf=sf)
 # The FFT isn't conserving energy (not sure it should) so re-normlising here!
 	int_ff	= util_scale_int_env(int_ff, area_ff, beam_power)
 	return int_ff, far_field_ideal, int_ff_onlyDPP, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
@@ -293,7 +362,11 @@ def expand_grid(meshes, scale_factor=3):
 	Take an input meshgrid and triple it's size by addings rows of zeros and columns of zeros to create a new meshgrid with the
 	data of the input mesh at the center, and zeros surrounding it.
 	"""
+	if scale_factor == 1:
+		return meshes
 	expanded_meshes = []
+	if not isinstance(meshes, list):
+		meshes = [meshes]
 	for mesh in tqdm(meshes, desc="Expanding grids"):
 		rows, cols = np.shape(mesh)
 		scale = int(np.ceil(scale_factor))
@@ -303,6 +376,8 @@ def expand_grid(meshes, scale_factor=3):
 		end = exp_rows - start
 		expanded_mesh[start:end,start:end] += mesh
 		expanded_meshes.append(expanded_mesh)
+	if len(expanded_meshes) == 1:
+		return expanded_mesh
 	return expanded_meshes
 def quantify_nonuniformity(int_ideal_unfiltered, int_nonuniform_unfiltered, sigma_0=None, scale_from_maximum=2):
 	mask_fwhm					= int_ideal_unfiltered >= (np.max(int_ideal_unfiltered) / scale_from_maximum)
@@ -837,7 +912,8 @@ def print_function(var_list):
 	int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 	foc_len, Lambda,
 	nonuni_DPP, nonuni_DPP_PS, nonuni_DDP_SSD, ssd_time_resoution, ssd_time_duration) = tuple(var_list)
-	print(f"""Far field grid scales area: {dxff/um:2.2f} microns by {dyff/um:2.2f} microns, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns
+	print(f"""Far field grid scales: {dxff/um:2.2f} microns per pixel in both xy, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns,
+size of grid in near field: {nx*dx / 1e-3:03.2f}mm and far field: {nx*dxff / um:03.2f}um
 
 Power in near field {pwr_beam_env_tot*1e-12:2.2e} TW, power in far field = {pwr_ff_tot* 1e-12:2.2e}TW,
 

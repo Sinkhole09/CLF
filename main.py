@@ -65,12 +65,25 @@ if __name__ == "__main__":
 #%%
 # applying ssd
 	do_ssd				= False
-	ssd_time_resolution	= 20
-	ssd_duration		= 1e-10
+	ssd_time_resolution	= 50
+	ssd_duration		= 1e-11
 	ssd_timesteps		= np.array([i*(ssd_duration / ssd_time_resolution) for i in range(ssd_time_resolution)])
 	int_ff_ssd, _, _, sigma_rms_ssd, sigma_rms_ssd_ps = perform_fft_normalize(int_beam_env=int_beam_env, beam_power=beam_power,area_nf=area_nf, area_ff=area_ff,
 													dpp_phase=dpp_phase, do_dpp=True, do_ssd=do_ssd, scale_from_max=scale_from_maximum, int_ideal_ff=int_beam_env_ff,
-													x=x, y=y, time=ssd_duration, time_resolution=ssd_time_resolution, write_to_file=False)
+													time=ssd_duration, time_resolution=ssd_time_resolution,
+													x=x, y=y, write_to_file=False)
+# applying isi.
+	do_isi					= True
+	carrier_frequency		= 299729458 / (351e-9)		# angular frequency of 351nm UV light
+	bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
+	isi_duration			= 1e-12
+	isi_time_resolution		= int(isi_duration // (1 / bandwidth))
+	echelon_block_width		= 16						# pixels
+	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
+							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase,
+							time=isi_duration, time_resolution=isi_time_resolution, do_isi=True, sf=scale_factor,
+							carrier_freq=carrier_frequency, bandwidth=bandwidth, echelon_block_width=echelon_block_width,
+							x=x, y=y)
 #%%
 # this must be done after the previous perform_fft_normalize() function call becuase we are changing int_beam_env
 	pwr_beam_env_tot	= np.sum(int_beam_env * area_nf)
@@ -80,12 +93,20 @@ if __name__ == "__main__":
 	# 				   dpp_phase, int_beam_env, int_ff, pwr_ff_tot, int_beam_env_nf,
 	# 				   cm, cm2, um)
 	# FIGURE1_PHASE_INTENSITY = intensity_phase_plots((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), far_field_ideal, int_ff, dpp_phase)
+	
+	# plotting comparison with ssd
 	nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd = -1, -1, -1
-	# ONLY_INTENSITY, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-	# 																	int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
-	# 																	ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
-	# 																	do_DPP=False, do_PS=True, plot_ssd=do_ssd, do_PS_SSD=True, ps_shift=1,
-	# 																	do_line=True, do_LogNorm=False, do_ideal=False, return_fig=True, use_sciop=False, scale_from_max=scale_from_maximum)
+	INTENSITY_COMPARISON_SSD, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
+									ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
+									do_DPP=True, do_PS=False, plot_ssd=do_ssd, do_PS_SSD=True, ps_shift=1,
+									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=False, use_sciop=True, scale_from_max=scale_from_maximum)
+	# plotting comparison with isi
+	INTENSITY_COMPARISON_ISI, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
+									ssd_data_items=(int_ff_isi, isi_time_resolution, isi_duration),
+									do_DPP=True, do_PS=False, plot_ssd=do_isi, do_PS_SSD=False, ps_shift=1,
+									do_line=False, do_LogNorm=False, do_ideal=True, return_fig=True, use_sciop=False, scale_from_max=scale_from_maximum)
 	# t_type, varname, norm
 	# KICKER = make_plots([(int_beam_env_nf, 'ff', 'INT ENV NEW', 'linear', 'img'), x, y, xff, yff, 'linear', 15, 330, None, 'x', 'y'])
 	# ssd_duration, ssd_time_resolution = 1e-8, 50000
@@ -122,14 +143,14 @@ if __name__ == "__main__":
 	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 					  time=4e-10, time_resolution=400, area_ff=area_ff, beam_power=beam_power,
-					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=4, show_com=True)
+					  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=False, fps=4, show_com=True)
 # printing key results
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
 				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 				foc_len, Lambda,
 				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, ssd_time_resolution, ssd_duration]
-	# print_function(var_list)
+	print_function(var_list)
 	plt.tight_layout()
 	plt.show()
 
