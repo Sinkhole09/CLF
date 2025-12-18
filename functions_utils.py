@@ -101,26 +101,6 @@ def beam_envelope(cords, N, amp=1, alpha=1, sigma=1, super_g_x_zero=1, super_g_y
 		) ** N
 	) #Beam intensity envelope at lens
 	return envelope
-def util_electric_field_component(amp, freq, time):
-	return amp * np.exp(-1j * freq * time)
-def util_1D_gaussian(x, mean, sigma):
-	normalize_factor	= 1/(sigma * np.sqrt(2*np.pi))
-	exponent			= np.exp(-0.5* ( (x - mean) / sigma) ** 2)
-	return normalize_factor * exponent
-def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_ntensity, int_beam_env):
-	# creating the range of spectral components
-	stds_covered	= 2
-	frequencies		= np.linspace(
-		carrier_freq - stds_covered*bandwidth,	# stat
-		carrier_freq + stds_covered*bandwidth,	# end
-		bins									# number of spectral components
-		)
-	amplitudes		= [np.sqrt(total_nf_ntensity / bins) for _ in range(bins)] # all spectral components have equal amplitude.
-	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
-	for component, frequency in enumerate(frequencies):
-		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
-		electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
-	return electric_field, frequencies
 def create_2D_grids(KesslerParms, resolution_fac=1, scale_factor=1):
 	nx	= KesslerParms.fftCells_x * resolution_fac  # Number of pixels in the x-direction in the FFT grid (simulated near-field image)
 	dx  = KesslerParms.nfPixSize_x / resolution_fac # Size of each pixel in x-direction at the near-field plane (where FFT is evaluated); I guess in meters?
@@ -177,35 +157,39 @@ def util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all):
 	with open("output.txt", "w") as file:
 		file.write(f"sigma_rms_ssd\tsigma_rms_ssd_ps\n")
 		file.writelines(f"{a}\t{b}\n" for a,b in zip(sigma_rms_ssd_all, sigma_rms_ssd_ps_all))
-def util_perform_ssd(x, y, time, time_resolution, near_field, int_ideal_ff, int_ff_onlyDPP, scale_from_max, area_ff, beam_power, write_to_file):
-	int_ff_ssd			= np.zeros(np.shape(near_field))
-	timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
-	sigma_rms_ssd_all	= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
-	sigma_rms_ssd_ps_all= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
-	for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
-		E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
-		)), desc="Applying smoothing by spectral dispersion smoothing"):
-		int_ff										= util_compute_fft(near_field)
-		int_ff										= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
-		int_ff_ssd									+= int_ff
-		int_ff_ssd_ps								= apply_polarisation_smoothing(int_ff_ssd)
-		# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
-		# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
-		if write_to_file:
-			util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx])
-	# if write_to_file:
-	# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
-	sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
-	sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
-	int_ff					= int_ff_ssd / time_resolution
-	return int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
+def util_electric_field_component(amp, freq, time):
+	return amp * np.exp(-1j * freq * time)
+def util_1D_distributions(x, total=None, mean=None, sigma=None, form='constant'):
+	if form == 'constant':
+		bins			= len(x) 
+		distribution	= np.full(bins, np.sqrt(total/bins), dtype=float) # all spectral components have equal amplitude.
+	if form == 'gaussian':
+		# normalize_factor	= 1/(sigma * np.sqrt(2*np.pi))
+		distribution		= np.exp(-0.5* ( (x - mean) / sigma) ** 2)
+		if isinstance(distribution, np.ndarray):
+			distribution *= np.sqrt(total / np.sum(distribution**2)) # essentially finding the scaling constant for the gaussian.
+	return distribution
+def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_ntensity, int_beam_env):
+	# creating the range of spectral components
+	stds_covered	= 2
+	frequencies		= np.linspace(
+		carrier_freq - stds_covered*bandwidth,	# stat
+		carrier_freq + stds_covered*bandwidth,	# end
+		bins									# number of spectral components
+		)
+	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="gaussian")
+	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
+	for component, frequency in enumerate(frequencies):
+		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
+		electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
+	return electric_field, frequencies
 def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
 	t_cycle			= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
 	random_delay	= np.random.randint(low=coherence_time / t_cycle) * t_cycle
 	return i * j * (coherence_time + random_delay)
 def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 					 time, time_resolution, bandwidth, carrier_freq, dpp, do_dpp=False,
-					 bins=5, echelon_block_width=1, sf=None):
+					 bins=5, echelon_block_width=1, sf=None, do_pms=False):
 	# creating echelon time_delays
 	tc					= 2*np.pi / bandwidth	# coherence time
 	rows, cols			= np.shape(x)
@@ -235,8 +219,36 @@ def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 				near_field *= dpp
 			int_ff				= util_compute_fft(near_field, True)
 			int_ff_component	+= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power / bins)
-		int_ff_isi				+= int_ff_component
-	return int_ff_isi / time_resolution
+		if do_pms:
+			yield int_ff_component
+		else:
+			int_ff_isi				+= int_ff_component
+	if do_pms:
+		return
+	else:
+		return int_ff_isi / time_resolution
+def util_perform_ssd(x, y, time, time_resolution, near_field, int_ideal_ff, int_ff_onlyDPP, scale_from_max, area_ff, beam_power, write_to_file):
+	int_ff_ssd			= np.zeros(np.shape(near_field))
+	timesteps 			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
+	sigma_rms_ssd_all	= [quantify_nonuniformity(int_ideal_ff, int_ff_onlyDPP, scale_from_maximum=scale_from_max)[1]]
+	sigma_rms_ssd_ps_all= [quantify_nonuniformity(int_ideal_ff, apply_polarisation_smoothing(int_ff_onlyDPP), scale_from_maximum=scale_from_max)[1]]
+	for idx, near_field in tqdm(enumerate(apply_smoothing_by_spectral_dispersion(
+		E_near_field=near_field, x_mesh=x, y_mesh=y, timesteps=timesteps, time_resolution=time_resolution, use_gen=True
+		)), desc="Applying smoothing by spectral dispersion smoothing"):
+		int_ff										= util_compute_fft(near_field)
+		int_ff										= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power)
+		int_ff_ssd									+= int_ff
+		int_ff_ssd_ps								= apply_polarisation_smoothing(int_ff_ssd)
+		# (sigma_rms_ssd_all, sigma_rms_ssd_ps_all) 	= util_saving_sigma_rms(int_ideal_ff, int_ff_ssd, int_ff_ssd_ps, idx, 
+		# 														  scale_from_max, sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+		if write_to_file:
+			util_make_folder_of_intensity_distribution_files(int_ff, timesteps[idx])
+	# if write_to_file:
+	# 	util_write_sigma_rms_to_file(sigma_rms_ssd_all, sigma_rms_ssd_ps_all)
+	sigma_rms_ssd_all 		= np.array(sigma_rms_ssd_all) / sigma_rms_ssd_all[0]
+	sigma_rms_ssd_ps_all	= np.array(sigma_rms_ssd_ps_all) / sigma_rms_ssd_ps_all[0]
+	int_ff					= int_ff_ssd / time_resolution
+	return int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
 def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None,
 						  area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, scale_from_max=2,
 						  do_isi=False, bandwidth=None, carrier_freq=None, echelon_block_width=64, sf=None,
@@ -796,7 +808,7 @@ def find_com_arr(direction_mesh: List[List[np.float64]], array: List[List[np.flo
 		length	= len(col)
 	com_pos		= avg_total / length 
 	return com_pos  
-def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, pcm, point_artist, fig, ax, area_ff, beam_power, nf, ff, coords, do_cumulative=False, show_com=False):
+def util_for_plot_moving_speckles_ssd(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, pcm, point_artist, fig, ax, area_ff, beam_power, nf, ff, coords, do_cumulative=False, show_com=False):
 	nf_x, nf_y			= nf
 	ff_x, ff_y			= ff
 	x,y					= coords
@@ -831,19 +843,27 @@ def util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timestep
 			with open(f"temp_centre_of_intensity_coords.txt", "a") as file:
 				file.write(f"timestep\t{timesteps[idx] / (1e-12):.2f}ps:\tcoords of centre of intensity:\t({com_x /(um):.2f}um, {com_y/(um):.2f}um)\n")
 		yield fig, ax
-def util_loop_pms(args: tuple, show_com=False):
-	(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-	pcm, point_artist, fig, ax, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
-	do_cumulative, writer, pause) = args
-	for fig, ax in util_for_plot_moving_speckles(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-										pcm, point_artist, fig, ax, area_ff, beam_power,
-										nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(nf_x[0],nf_y[0]),
-										do_cumulative=do_cumulative, show_com=show_com):
-		if pause: plt.pause(pause)
-		if writer is not None: writer.grab_frame()
-		fig.canvas.draw()
+def util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
+	pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
+	do_cumulative, writer, pause, show_com=False, do_ssd=False, do_isi=False,
+	carrier_freq=None, bandwidth=None, bins=None, echelon_block_width=None, sf=None):
+	if do_ssd:
+		for fig, ax in util_for_plot_moving_speckles_ssd(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
+											pcm, point_artist, fig, ax, area_ff, beam_power,
+											nf=(nf_x, nf_y), ff=(ff_x, ff_y), coords=(nf_x[0],nf_y[0]),
+											do_cumulative=do_cumulative, show_com=show_com):
+			if pause: plt.pause(pause)
+			if writer is not None: writer.grab_frame()
+			fig.canvas.draw()
+	if do_isi:
+		for int_ff_isi in util_perform_isi(int_beam_env, x=nf_x[0], y=nf_y[0], area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
+					 time=time, time_resolution=time_resolution, bandwidth=bandwidth, carrier_freq=carrier_freq, dpp=dpp, do_dpp=True,
+					 bins=bins, echelon_block_width=echelon_block_width, sf=sf, do_pms=True):
 	return
-def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution, area_ff, beam_power, nf_lim=14, ff_lim=100, img_norm=None, do_cumulative=False, make_movie=False, fps=1, show_com=False):
+def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, ff_y, time, time_resolution,
+						 area_nf, area_ff, beam_power, nf_lim=14, ff_lim=100, do_ssd=False, do_isi=False,
+						 carrier_freq=None, bandwidth=None, echelon_block_width=None, scale_factor=None,bins=None,
+						 img_norm=None, do_cumulative=False, make_movie=False, fps=1, show_com=False):
 	if not make_movie:
 		plt.ion()
 	else:
@@ -876,14 +896,16 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
 		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.2f}ps_{ff_lim*2}micron-grid.mp4"
 		with writer.saving(fig, movie_name, dpi=200):
-			util_loop_pms(args=(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-				 pcm, point_artist, fig, ax, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
-				 do_cumulative, writer, None), show_com=show_com)
+			util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
+				 pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
+				 do_cumulative, writer, pause=None, show_com=show_com, do_ssd=do_ssd, do_isi=do_isi,
+				 carrier_freq=carrier_freq, bandwidth=bandwidth, bins=bins, echelon_block_width=echelon_block_width, sf=scale_factor)
 		plt.close(fig)
 	else:
-		util_loop_pms(args=(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution,
-				pcm, point_artist, fig, ax, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
-				do_cumulative, None, 0.01), show_com=show_com)
+		util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
+				 pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
+				 do_cumulative, writer, pause=, show_com=show_com, do_ssd=do_ssd, do_isi=do_isi,
+				 carrier_freq=carrier_freq, bandwidth=bandwidth, bins=bins, echelon_block_width=echelon_block_width, sf=scale_factor)
 	plt.ioff()
 	return
 def util_shift_2_pi(phase_array, TWO_PI):
