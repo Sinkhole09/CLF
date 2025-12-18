@@ -73,15 +73,15 @@ if __name__ == "__main__":
 													time=ssd_duration, time_resolution=ssd_time_resolution,
 													x=x, y=y, write_to_file=False)
 # applying isi.
-	do_isi					= True
+	do_isi					= False
 	carrier_frequency		= 299729458 / (351e-9)		# angular frequency of 351nm UV light
 	bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
-	isi_duration			= 1e-12
+	isi_duration			= 5e-13
 	isi_time_resolution		= int(isi_duration // (1 / bandwidth))
-	echelon_block_width		= 16						# pixels
+	echelon_block_width		= 32						# pixels
 	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
 							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase,
-							time=isi_duration, time_resolution=isi_time_resolution, do_isi=True, sf=scale_factor,
+							time=isi_duration, time_resolution=isi_time_resolution, do_isi=do_isi, sf=scale_factor,
 							carrier_freq=carrier_frequency, bandwidth=bandwidth, echelon_block_width=echelon_block_width,
 							x=x, y=y)
 #%%
@@ -106,7 +106,7 @@ if __name__ == "__main__":
 									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
 									ssd_data_items=(int_ff_isi, isi_time_resolution, isi_duration),
 									do_DPP=True, do_PS=False, plot_ssd=do_isi, do_PS_SSD=False, ps_shift=1,
-									do_line=False, do_LogNorm=False, do_ideal=True, return_fig=True, use_sciop=False, scale_from_max=scale_from_maximum)
+									do_line=False, do_LogNorm=False, do_ideal=True, return_fig=do_isi, use_sciop=False, scale_from_max=scale_from_maximum)
 	# t_type, varname, norm
 	# KICKER = make_plots([(int_beam_env_nf, 'ff', 'INT ENV NEW', 'linear', 'img'), x, y, xff, yff, 'linear', 15, 330, None, 'x', 'y'])
 	# ssd_duration, ssd_time_resolution = 1e-8, 50000
@@ -140,10 +140,16 @@ if __name__ == "__main__":
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	# plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
-	# 				  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-	# 				  time=4e-10, time_resolution=400, area_ff=area_ff, beam_power=beam_power,
-	# 				  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=False, fps=4, show_com=True)
+	carrier_frequency		= 299729458 / (351e-9)		# angular frequency of 351nm UV light
+	bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
+	isi_duration			= 5e-13
+	isi_time_resolution		= int(isi_duration // (1 / bandwidth))
+	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
+					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+					  time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
+					  ff_lim=20, img_norm='linear', do_cumulative=False, make_movie=False, fps=4, show_com=False,
+					  do_ssd=False, do_isi=True, carrier_freq=carrier_frequency, bandwidth=bandwidth,
+					  echelon_block_width=echelon_block_width, scale_factor=scale_factor, bins=5)
 # printing key results
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
