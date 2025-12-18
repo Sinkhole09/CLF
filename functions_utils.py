@@ -947,7 +947,7 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 		# --- Movie writer setup ---
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
 		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.2f}ps_{ff_lim*2}micron-grid.mp4"
-		with writer.saving(fig, movie_name, dpi=200):
+		with writer.saving(fig, movie_name, dpi=400):
 			util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
 				 pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
 				 do_cumulative, writer=writer, pause=None, show_com=show_com, do_ssd=do_ssd, do_isi=do_isi,

@@ -142,12 +142,12 @@ if __name__ == "__main__":
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
 	carrier_frequency		= 299729458 / (351e-9)		# angular frequency of 351nm UV light
 	bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
-	isi_duration			= 5e-13
+	isi_duration			= 1e-12
 	isi_time_resolution		= int(isi_duration // (1 / bandwidth))
 	plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 					  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 					  time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
-					  ff_lim=20, img_norm='linear', do_cumulative=False, make_movie=False, fps=4, show_com=False,
+					  ff_lim=20, img_norm='linear', do_cumulative=False, make_movie=True, fps=4, show_com=False,
 					  do_ssd=False, do_isi=True, carrier_freq=carrier_frequency, bandwidth=bandwidth,
 					  echelon_block_width=echelon_block_width, scale_factor=scale_factor, bins=5)
 # printing key results
