@@ -87,11 +87,24 @@ def super_gaussian(cords, amp, sigma, N):
 			-1*(r2) ** N 
 	)
 	return np.ravel(g)
-def beam_envelope(cords, N, amp=1, alpha=1, sigma=1, super_g_x_zero=1, super_g_y_zero=1):
+def beam_envelope_square(x, y, width, p=8, m=8):
+    """
+    Super-Gaussian, square-like beam envelope.
+
+    x, y : 2D arrays (meshgrid) or broadcastable arrays
+    width : sets the half-size of the bright square region
+    p : 'Lp' exponent controlling how square the shape is (higher -> more square)
+    m : super-Gaussian order controlling how sharp the edges are
+    """
+    # Lp "radius"
+    r = (np.abs(x)**p + np.abs(y)**p)**(1.0/p)
+    # super-Gaussian profile in that radius
+    return np.exp(-(r / width)**m)
+def beam_envelope_supergaussian(cords, N, amp=1, alpha=1, sigma=1, super_g_x_zero=1, super_g_y_zero=1):
 	"""
 	amp * np.exp(
 			alpha * (np.sqrt(
-			(x / super_g_x_zero) ** 2 + (y / super_g_y_zero) ** 2
+			(x / super_g_x_zero) ** 2 + (y / super_g_y_zero) ** 2d
 		) / (sigma)) ** N
 	"""
 	x, y = cords
@@ -129,11 +142,11 @@ def util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy):
 	area_ff          = dxff * dyff
 	return xff1d, dxff, xff, yff1d, dyff, yff, area_ff 
 def util_compute_fft(near_field, do_abs_squared=True):
-	efield_ff =  np.fft.fftshift(
+	efield =  np.fft.fftshift(
 					np.fft.fft2(
-						near_field, norm='ortho'))
-	efield 		= np.abs(efield_ff)
-	if do_abs_squared: efield = efield**2
+						near_field, norm='ortho')
+						)
+	if do_abs_squared: efield = np.abs(efield)**2
 	return efield
 def util_make_folder_of_intensity_distribution_files(int_ff, time):
 	folder_path = "./Intensity_Distributions/"
@@ -177,7 +190,7 @@ def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_nt
 		carrier_freq + stds_covered*bandwidth,	# end
 		bins									# number of spectral components
 		)
-	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="gaussian")
+	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="constant")
 	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
 	for component, frequency in enumerate(frequencies):
 		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
@@ -186,7 +199,7 @@ def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_nt
 def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
 	t_cycle			= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
 	random_delay	= np.random.randint(low=coherence_time / t_cycle) * t_cycle
-	return i * j * (coherence_time + random_delay)
+	return i * j * (coherence_time) + random_delay
 def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 					 time, time_resolution, bandwidth, carrier_freq, dpp, do_dpp=False,
 					 bins=5, echelon_block_width=1, sf=None, do_pms=False):
@@ -207,19 +220,21 @@ def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 	# computing far field intensity for each timestep
 	timesteps			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 	int_ff_isi			= np.zeros((rows, cols))
-	int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
-	for timestep in tqdm(timesteps, desc="Applying isi"):
+	# int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
+	for timestep in tqdm(timesteps, desc="Applying isi"):	
 		electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
-							carrier_freq, bandwidth,
+							carrier_freq, bandwidth,	
 							time=echelon_delays + timestep, bins=bins,
 							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
-		int_ff_component	= np.zeros((rows, cols))
+		E_ff_component	= np.zeros((rows, cols), dtype=complex)
 		for near_field in electric_fields: # each spectral component (num of spectral components is bins)
 			if do_dpp:	# applying the phase plate
 				near_field *= dpp
-			int_ff				= util_compute_fft(near_field, True)
-			int_ff_component	+= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power / bins)
-			int_ff_isi			+= int_ff_component
+			E_ff				= util_compute_fft(near_field, False)
+			E_ff_component		+= E_ff
+			# E_ff_component	+= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power / bins)
+		int_ff_component		= np.abs(E_ff_component)**2
+		int_ff_isi				+= util_scale_int_env(int_ff_component, area_ff, beam_power)
 	return int_ff_isi / time_resolution
 def util_perform_ssd(x, y, time, time_resolution, near_field, int_ideal_ff, int_ff_onlyDPP, scale_from_max, area_ff, beam_power, write_to_file):
 	int_ff_ssd			= np.zeros(np.shape(near_field))
@@ -256,6 +271,7 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		near_field		*= dpp										# apply DPP phase modulation
 		int_ff_onlyDPP	= util_compute_fft(near_field)
 		int_ff_onlyDPP	= util_scale_int_env(int_ff_onlyDPP, area_ff, beam_power)
+	else: int_ff_onlyDPP = None
 	if do_ssd:
 		int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all	= util_perform_ssd(x, y, time, time_resolution,
 																	 near_field, int_ideal_ff, int_ff_onlyDPP,
@@ -265,8 +281,8 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		sigma_rms_ssd_all, sigma_rms_ssd_ps_all = None, None
 	if do_isi:
 		int_ff	= util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
-							time, time_resolution, bandwidth, carrier_freq,
-							dpp, do_dpp=do_dpp, echelon_block_width=echelon_block_width, sf=sf, do_pms=False)
+							time, time_resolution, bandwidth, carrier_freq, bins=20,
+							dpp=dpp, do_dpp=True, echelon_block_width=echelon_block_width, sf=sf, do_pms=False)
 # The FFT isn't conserving energy (not sure it should) so re-normlising here!
 	int_ff	= util_scale_int_env(int_ff, area_ff, beam_power)
 	return int_ff, far_field_ideal, int_ff_onlyDPP, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
@@ -457,21 +473,34 @@ def util_img_plot(fig, ax, x, y, data, attributes, show_cb=True):
 		- Applies logarithmic normalization if `norm="log"`.
 	"""
 	if attributes is None:
-		pcm = ax.pcolormesh(data, cmap='rainbow')
-		fig.colorbar(pcm, ax=ax)
-		return pcm
-	plot_type, xlabel, ylabel, set_norm, xlim, ylim, x_scale, y_scale, varname = attributes
-	ax.set_xlabel(xlabel)
-	ax.set_ylabel(ylabel)
+		attributes = 'p'
+	(plot_type, 
+	xlabel,
+	ylabel,
+	set_norm, 
+	xlim,
+	ylim,
+	x_scale,
+	y_scale,
+	varname) = list(attributes) + [None] * (9 - len(attributes))
+	if xlabel is not None:
+		ax.set_xlabel(xlabel)
+	if ylabel is not None:
+		ax.set_ylabel(ylabel)
 	norm = LogNorm(vmin=1e-5) if set_norm == 'log' else None
+	if x_scale is None:
+		x_scale = 1.0
+	if y_scale is None:
+		y_scale = 1.0
 	pcm		= ax.pcolormesh(x / x_scale, y / y_scale, data, norm=norm, cmap='rainbow')
 	if show_cb:
 		cb 		= fig.colorbar(pcm, ax=ax)
-		cb		.set_label(varname)
-	if xlim:
-		ax.set_xlim(-1*xlim, xlim)
-	if ylim:	
-		ax.set_ylim(-1*ylim, ylim)
+		if varname is not None:
+			cb		.set_label(varname)
+	if xlim is None: xlim = np.max(x[:,0])
+	if ylim is None: ylim = np.max(y[0,:])
+	ax.set_xlim(-1*xlim, xlim)
+	ax.set_ylim(-1*ylim, ylim)
 	return pcm
 def util_line_plot(ax, x, y, data, attributes, xnorm=None, do_scatter=False, do_top_edge=False, top_items=(None, None), show_legend=True):
 	"""
@@ -508,8 +537,18 @@ def util_line_plot(ax, x, y, data, attributes, xnorm=None, do_scatter=False, do_
 		- If `ylim` is a tuple, sets exact lower and upper limits.
 		- Marks single lines with "x" markers.
 	"""
-	plot_type, xlabel, ylabel, norm, xlim, ylim, x_scale, line_design, varname = attributes
-	if np.shape(line_design) == (3,):
+	(plot_type,
+	xlabel,
+	ylabel,
+	norm,
+	xlim,
+	ylim,
+	x_scale,
+	line_design,
+	varname) = list(attributes) + [None] * (9 - len(attributes))
+	if x_scale is None:
+		x_scale = 1.0
+	if line_design is not None and np.shape(line_design) == (3,):
 		line_style, colour, label = line_design
 		if do_scatter:	ax.scatter(x / x_scale, data, color=colour, label=label, marker='x')
 		else: 			ax.plot(x / x_scale, data, linestyle=line_style, color=colour, label=label, marker='x')
@@ -541,18 +580,19 @@ def util_line_plot(ax, x, y, data, attributes, xnorm=None, do_scatter=False, do_
 		top.set_xlabel(top_label)
 	if show_legend: ax.legend()
 def util_plt_one_column_or_row(data_arrays, plt_attributes, one_col=True):
-	if one_col: fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(8,2*8))
-	else: 		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*8,8)) 
+	if one_col: fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(4,2*6))
+	else: 		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*6,4)) 
 	for pos, data in tqdm(enumerate(data_arrays), desc="Plotting"):
 		x, y, data_array 	= data
-		plot_type 			= plt_attributes[pos][0]
+		plot_type 			= 'img'	if plt_attributes is None else plt_attributes[pos][0]
+		attribute			= None	if plt_attributes is None else plt_attributes[pos]
 		if plot_type == 'img':
-			util_img_plot(fig, ax[pos], x, y, data_array, plt_attributes[pos])
+			util_img_plot(fig, ax[pos], x, y, data_array, attribute)
 		if plot_type == 'line':
-			util_line_plot(ax[pos], x, y, data_array, plt_attributes[pos])
+			util_line_plot(ax[pos], x, y, data_array, attribute)
 	plt.tight_layout()
 	return fig
-def util_plt_MbyN_grid(data_Arrays, plt_attributes, nrows=3, fig_scale=8):
+def util_plt_MbyN_grid(data_Arrays, plt_attributes, nrows=3, fig_scale=4):
 	num_plots = len(data_Arrays)
 	ncols = int(np.ceil(num_plots / nrows))
 	fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=(nrows*fig_scale, ncols*fig_scale))
@@ -764,13 +804,29 @@ def make_plots(collection, scatter=False, do_top_edge=False, top_items=(None,Non
 		  and `plt_type`.
 	"""
 	fig, ax = plt.subplots()
-	if type(collection) != list: # just a 2D array was given to be plotted, without any x or y
+	if not isinstance(collection, list): # just a 2D array was given to be plotted, without any x or y
 		util_img_plot(fig, ax, None, None, collection, None, None)
 		return fig
 	for items in collection:
-		if type(collection[-1]) != tuple: items=tuple(collection)
-		data_to_plot, x, y, xff, yff, xnorm, nf_lim, ff_lim, x_scale, xlabel, ylabel= items
-		data_array, scope, varname, norm, plt_type 									= data_to_plot
+		if not isinstance(collection[-1], tuple): items=tuple(collection)
+		(data_to_plot,
+		x,
+		y,
+		xff,
+		yff,
+		xnorm,
+		nf_lim,
+		ff_lim,
+		x_scale,
+		xlabel,
+		ylabel)		= list(items) + [None] * (11 - len(items))
+		if x_scale is None:
+			x_scale = 1.0
+		(data_array,
+		scope,
+		varname,
+		norm,
+		plt_type)	= list(data_to_plot) + [None] * (5 - len(data_to_plot))
 													#line_style, colour, label
 				# this is weird, but when ploting lines, yff stores the line design as a tuple
 		yscale = [yff, yff] if plt_type == 'line' else [um, cm]
@@ -785,7 +841,7 @@ def make_plots(collection, scatter=False, do_top_edge=False, top_items=(None,Non
 		(x_grid, y_grid)	= (xff, yff)				if scope == 'ff' else (x, y)
 		if plt_type 	== 'img'	: util_img_plot(fig, ax, x_grid, y_grid, data_array, attribute)
 		elif plt_type 	== 'line'	: util_line_plot(ax, x, y, data_array, attribute, xnorm=xnorm, do_scatter=scatter, do_top_edge=do_top_edge, top_items=top_items, show_legend=show_legend)
-		if type(collection[-1]) != tuple: break
+		if not isinstance(collection[-1], tuple): break
 	return fig
 def find_com_arr(direction_mesh: List[List[np.float64]], array: List[List[np.float64]], direction: str) -> np.float64:
 	"""Assumes all arrays are square arrays"""
@@ -899,7 +955,7 @@ def util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_re
 				nf_x, ff_x, nf_y, ff_y, int_ff_env, int_ff_isi
 			)
 			pcm.set_array(int_ff_display)
-			ax.set_title(f"Timestep: {timesteps[idx] / (1e-12):.2f}ps")
+			ax.set_title(f"Timestep: {timesteps[idx] / (1e-12):.4f}ps")
 			
 			#show com
 			if show_com:
@@ -999,7 +1055,7 @@ grid scale near field: {nx*dx:2.2f}m by {ny*dy:2.2f}m, focal length: {foc_len}m
 
 f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}
 
-Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with ssd: {nonuni_DDP_SSD:3.2f}%, with PS: {nonuni_DPP_PS:3.2f}%,  ssd time resolution: {ssd_time_resoution}, ssd time duration: {ssd_time_duration}""")
+Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with ssd/isi: {nonuni_DDP_SSD:3.2f}%, and PS: {nonuni_DPP_PS:3.2f}%,  time resolution: {ssd_time_resoution}, duration: {ssd_time_duration}""")
 def test_func(x, y, omega=1):
 	return np.sin(
 			omega * np.sqrt(x*x + y*y)
