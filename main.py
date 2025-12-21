@@ -44,10 +44,12 @@ if __name__ == "__main__":
 # initial envelope
 	area_nf										= dx * dy
 	xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
-	# int_beam_env_nf								= beam_envelope_supergaussian(alpha=np.log(0.5), sigma= (25.8*cm) / 2,
-	# 															   cords=(x,y), N=24/2)									# Beam intensity envelope at lens
-	square_p = 3
-	int_beam_env_nf			= beam_envelope_square(x, y, width=(25.8*cm) / 2, p=square_p, m=24)
+	int_beam_env_nf								= beam_envelope_supergaussian(alpha=np.log(0.5), sigma= (25.8*cm) / 2,
+																   cords=(x,y), N=24/2)									# Beam intensity envelope at lens
+	do_square = False
+	if do_square:
+		square_p	= 3
+		int_beam_env_nf			= beam_envelope_square(x, y, width=(25.8*cm) / 2, p=square_p, m=24)
 	int_beam_env_nf			= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
 	expandGrids = True
@@ -58,9 +60,10 @@ if __name__ == "__main__":
 		int_beam_env_nf, dpp_phase	= tuple(expand_grid([int_beam_env_nf, dpp_phase], scale_factor=scale_factor))
 	int_beam_env = int_beam_env_nf
 	super_g_zero								= 358e-4*cm  # scale_factor*358e-4*cm if expandGrids else 
-	# int_beam_env_ff								= beam_envelope_supergaussian(alpha=-1,cords=(xff,yff),
-	# 															  super_g_x_zero=super_g_zero, super_g_y_zero=super_g_zero, N=4.77/2)	# same env as visrad and pyodin
-	int_beam_env_ff		= beam_envelope_square(xff, yff, width=358e-4*cm, p=square_p, m=4.77)
+	int_beam_env_ff								= beam_envelope_supergaussian(alpha=-1,cords=(xff,yff),
+																  super_g_x_zero=super_g_zero, super_g_y_zero=super_g_zero, N=4.77/2)	# same env as visrad and pyodin
+	if do_square:
+		int_beam_env_ff		= beam_envelope_square(xff, yff, width=358e-4*cm, p=square_p, m=4.77)
 	int_beam_env_ff		= util_scale_int_env(int_beam_env_ff, area_ff, beam_power)
 #%%
 	# int_beam_env	= beam_envelope_square(xff, yff, width=358e-4 * cm, p=24, m=4.77)
@@ -85,14 +88,15 @@ if __name__ == "__main__":
 # applying isi
 	do_isi					= True
 	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-	bandwidth				= 0.5 * carrier_frequency	# in radians, given as a percentage of central frequency
-	isi_duration			= 1e-13
-	isi_time_resolution		= int(isi_duration // (1 / bandwidth)) * 5
-	echelon_block_width		= 16						# pixels
+	bandwidth				= 0.05 * carrier_frequency			# in radians, given as a percentage of central frequency
+	isi_duration			= 2e-13
+	isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 5
+	echelon_block_width		= 16								# pixels
+	bins					= 25	
 	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
 							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase, do_dpp=True,
 							time=isi_duration, time_resolution=isi_time_resolution, do_isi=do_isi, sf=scale_factor,
-							carrier_freq=carrier_frequency, bandwidth=bandwidth, echelon_block_width=echelon_block_width,
+							carrier_freq=carrier_frequency, bandwidth=bandwidth, echelon_block_width=echelon_block_width, bins=bins,
 							x=x, y=y)
 #%%
 # this must be done after the previous perform_fft_normalize() function call becuase we are changing int_beam_env
@@ -150,10 +154,10 @@ if __name__ == "__main__":
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-	bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
-	isi_duration			= 1e-12
-	isi_time_resolution		= int(isi_duration // (1 / bandwidth))
+	# carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
+	# bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
+	# isi_duration			= 1e-12
+	# isi_time_resolution		= int(isi_duration // (1 / bandwidth))
 	# plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 	# 				  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 	# 				  time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
@@ -167,7 +171,7 @@ if __name__ == "__main__":
 				area_nf, area_ff,
 				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 				foc_len, Lambda,
-				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, resolution, duration]
+				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, resolution, duration, bandwidth / carrier_frequency]
 	print_function(var_list)
 	plt.tight_layout()
 	plt.show()

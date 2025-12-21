@@ -184,22 +184,34 @@ def util_1D_distributions(x, total=None, mean=None, sigma=None, form='constant')
 	return distribution
 def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_ntensity, int_beam_env):
 	# creating the range of spectral components
-	stds_covered	= 2
+	stds_covered	= 1
 	frequencies		= np.linspace(
 		carrier_freq - stds_covered*bandwidth,	# stat
 		carrier_freq + stds_covered*bandwidth,	# end
 		bins									# number of spectral components
 		)
-	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="constant")
+	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="gaussian")
 	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
 	for component, frequency in enumerate(frequencies):
 		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
 		electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
 	return electric_field, frequencies
 def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
-	t_cycle			= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
-	random_delay	= np.random.randint(low=coherence_time / t_cycle) * t_cycle
-	return i * j * (coherence_time) + random_delay
+	echelon_base		= (i + j) * (coherence_time)
+	t_cycle				= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
+	
+	N 					= coherence_time // t_cycle
+	n_row_blocks		= np.max(i) +1 # number of echelon steps/blocks along the rows and cols
+	n_col_blocks		= np.max(j) +1
+
+	row_random_delays	= np.random.randint(low=0, high=N, size=n_row_blocks) * t_cycle # one random delay value for each
+	col_random_delays	= np.random.randint(low=0, high=N, size=n_col_blocks) * t_cycle # block along rows and cols 
+
+	row_random_blocks	= row_random_delays[i] 	# makes array same shape as i, uses the elements of i to index
+	col_random_blocks	= col_random_delays[j]	# fancy indexing, this is the coolest thing ever
+
+	echelon = echelon_base + (row_random_blocks + col_random_blocks)
+	return echelon
 def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 					 time, time_resolution, bandwidth, carrier_freq, dpp, do_dpp=False,
 					 bins=5, echelon_block_width=1, sf=None, do_pms=False):
@@ -209,9 +221,11 @@ def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 	if sf is not None:
 		rows = int(rows / sf)
 		cols = int(cols / sf)
-	i, j				= np.arange(rows)[:, None], np.arange(cols)[None, :]
-	I_block, J_block	= i // echelon_block_width, j // echelon_block_width # performing element-wise integer(floor) division
+	block_size			= rows // echelon_block_width
+	i, j				= np.arange(1, rows+1, dtype=int)[:, None], np.arange(1, cols+1)[None, :]
+	I_block, J_block	= i // block_size, j // block_size # performing element-wise integer(floor) division
 							# i and I_block have the same shape and same number of elements.
+	I_block, J_block	= I_block, J_block 
 	echelon_delays		= util_echelon_time_delay(I_block, J_block, coherence_time=tc, carrier_freq=carrier_freq)
 	if sf is not None:
 		echelon_delays	= expand_grid(echelon_delays, scale_factor=sf)
@@ -260,7 +274,7 @@ def util_perform_ssd(x, y, time, time_resolution, near_field, int_ideal_ff, int_
 	return int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
 def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None,
 						  area_nf=None, area_ff=None, do_dpp=True, do_ssd=False, scale_from_max=2,
-						  do_isi=False, bandwidth=None, carrier_freq=None, echelon_block_width=64, sf=None,
+						  do_isi=False, bandwidth=None, carrier_freq=None, echelon_block_width=64, bins=5, sf=None,
 						  x=None, y=None, time=None, time_resolution=None, write_to_file=False):
 	near_field		= np.exp(-1j) * np.exp(1j) * (int_beam_env)**0.5		#V/m    #proportionality relation. E field amplitude squared is proportional to intensity
 # idealised far field intensity distribution (fft before phase plate or smoothing)
@@ -281,7 +295,7 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		sigma_rms_ssd_all, sigma_rms_ssd_ps_all = None, None
 	if do_isi:
 		int_ff	= util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
-							time, time_resolution, bandwidth, carrier_freq, bins=20,
+							time, time_resolution, bandwidth, carrier_freq, bins=bins,
 							dpp=dpp, do_dpp=True, echelon_block_width=echelon_block_width, sf=sf, do_pms=False)
 # The FFT isn't conserving energy (not sure it should) so re-normlising here!
 	int_ff	= util_scale_int_env(int_ff, area_ff, beam_power)
@@ -1041,8 +1055,8 @@ def print_function(var_list):
 	(nx, dx, dxff, ny, dy, dyff, area_nf, area_ff,
 	int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 	foc_len, Lambda,
-	nonuni_DPP, nonuni_DPP_PS, nonuni_DDP_SSD, ssd_time_resoution, ssd_time_duration) = tuple(var_list)
-	print(f"""Far field grid scales: {dxff/um:2.2f} microns per pixel in both xy, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns,
+	nonuni_DPP, nonuni_DPP_PS, nonuni_DDP_SSD, time_resoution, time_duration, isi_bandwidth) = list(var_list) + [-1.0 for _ in range(20- len(var_list))]
+	information = f"""Far field grid scales: {dxff/um:2.2f} microns per pixel in both xy, speckle scale is {foc_len/(dx*nx)*Lambda/um:2.2f} microns,
 size of grid in near field: {nx*dx / 1e-3:03.2f}mm and far field: {nx*dxff / um:03.2f}um
 
 Power in near field {pwr_beam_env_tot*1e-12:2.2e} TW, power in far field = {pwr_ff_tot* 1e-12:2.2e}TW,
@@ -1055,7 +1069,10 @@ grid scale near field: {nx*dx:2.2f}m by {ny*dy:2.2f}m, focal length: {foc_len}m
 
 f_num_x = {foc_len/(nx*dx)}, f_num_y = {foc_len/(ny*dy)}, f_number: {f_number}
 
-Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with ssd/isi: {nonuni_DDP_SSD:3.2f}%, and PS: {nonuni_DPP_PS:3.2f}%,  time resolution: {ssd_time_resoution}, duration: {ssd_time_duration}""")
+Nonuniformity with only DPP: {nonuni_DPP:3.2f}% (by definition), with ssd/isi: {nonuni_DDP_SSD:3.2f}%, and PS: {nonuni_DPP_PS:3.2f}%,  duration: {time_duration}s,  time resolution: {time_duration / time_resoution: 2.2e}s"""
+
+	information += f", isi bandwidth: {isi_bandwidth*100:2.2f}% of carrier freq"
+	print(information)
 def test_func(x, y, omega=1):
 	return np.sin(
 			omega * np.sqrt(x*x + y*y)
