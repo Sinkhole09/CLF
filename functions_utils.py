@@ -114,6 +114,11 @@ def beam_envelope_supergaussian(cords, N, amp=1, alpha=1, sigma=1, super_g_x_zer
 		) ** N
 	) #Beam intensity envelope at lens
 	return envelope
+def beam_envelope_sinc(x, y, width, power):
+	alpha	= 1 / width
+	sinc_x	= np.sin(x * alpha) / (x * alpha)
+	sinc_y	= np.sin(y * alpha) / (y * alpha)
+	return (sinc_x * sinc_y)**power
 def create_2D_grids(KesslerParms, resolution_fac=1, scale_factor=1):
 	nx	= KesslerParms.fftCells_x * resolution_fac  # Number of pixels in the x-direction in the FFT grid (simulated near-field image)
 	dx  = KesslerParms.nfPixSize_x / resolution_fac # Size of each pixel in x-direction at the near-field plane (where FFT is evaluated); I guess in meters?
@@ -214,7 +219,7 @@ def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
 	return echelon
 def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 					 time, time_resolution, bandwidth, carrier_freq, dpp, do_dpp=False,
-					 bins=5, echelon_block_width=1, sf=None, do_pms=False):
+					 bins=5, echelon_block_width=1, sf=None):
 	# creating echelon time_delays
 	tc					= 2*np.pi / bandwidth	# coherence time
 	rows, cols			= np.shape(x)
@@ -296,8 +301,8 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 	if do_isi:
 		int_ff	= util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 							time, time_resolution, bandwidth, carrier_freq, bins=bins,
-							dpp=dpp, do_dpp=True, echelon_block_width=echelon_block_width, sf=sf, do_pms=False)
-# The FFT isn't conserving energy (not sure it should) so re-normlising here!
+							dpp=dpp, do_dpp=True, echelon_block_width=echelon_block_width, sf=sf)
+	# The FFT isn't conserving energy (not sure it should) so re-normlising here!
 	int_ff	= util_scale_int_env(int_ff, area_ff, beam_power)
 	return int_ff, far_field_ideal, int_ff_onlyDPP, sigma_rms_ssd_all, sigma_rms_ssd_ps_all
 def make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff, dpp_phase, int_beam_env, int_ff, pwr_ff_tot, near_field, cm, cm2, um):
@@ -916,9 +921,11 @@ def util_for_plot_moving_speckles_isi(int_beam_env, x, y, area_nf, area_ff, beam
 	if sf is not None:
 		rows = int(rows / sf)
 		cols = int(cols / sf)
-	i, j				= np.arange(rows)[:, None], np.arange(cols)[None, :]
-	I_block, J_block	= i // echelon_block_width, j // echelon_block_width # performing element-wise integer(floor) division
+	block_size			= rows // echelon_block_width
+	i, j				= np.arange(1, rows+1, dtype=int)[:, None], np.arange(1, cols+1)[None, :]
+	I_block, J_block	= i // block_size, j // block_size # performing element-wise integer(floor) division
 							# i and I_block have the same shape and same number of elements.
+	I_block, J_block	= I_block, J_block 
 	echelon_delays		= util_echelon_time_delay(I_block, J_block, coherence_time=tc, carrier_freq=carrier_freq)
 	if sf is not None:
 		echelon_delays	= expand_grid(echelon_delays, scale_factor=sf)
@@ -927,23 +934,24 @@ def util_for_plot_moving_speckles_isi(int_beam_env, x, y, area_nf, area_ff, beam
 	# computing far field intensity for each timestep
 	timesteps			= [i*(time / time_resolution) for i in range(time_resolution)] # dividing the total time into discrete steps
 	int_ff_isi			= np.zeros((rows, cols))
-	int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[0,:], y_range=y[:,0])
-	for idx, timestep in tqdm(enumerate(timesteps), desc="Applying isi"):
+	# int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
+	for idx, timestep in tqdm(enumerate(timesteps), desc="Applying isi"):	
 		electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
-							carrier_freq, bandwidth,
+							carrier_freq, bandwidth,	
 							time=echelon_delays + timestep, bins=bins,
 							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
-		int_ff_component	= np.zeros((rows, cols))
+		E_ff_component	= np.zeros((rows, cols), dtype=complex)
 		for near_field in electric_fields: # each spectral component (num of spectral components is bins)
 			if do_dpp:	# applying the phase plate
 				near_field *= dpp
-			int_ff				= util_compute_fft(near_field, True)
-			int_ff_component	+= util_scale_int_env(int_beam_env=int_ff, area=area_ff, beam_power=beam_power / bins)
+			E_ff			= util_compute_fft(near_field, False)
+			E_ff_component	+= E_ff
+		int_ff_component	= np.abs(E_ff_component)**2
 		if do_cumulative:
-			int_ff_isi += int_ff_component
+			int_ff_isi		+= util_scale_int_env(int_ff_component, area_ff, beam_power)
 			int_ff_display = int_ff_isi / idx if idx > 0 else int_ff_isi
 		else:
-			int_ff_display = int_ff_component
+			int_ff_display = util_scale_int_env(int_ff_component, area_ff, beam_power)
 		yield int_ff_display
 def util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
 	pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
@@ -1016,7 +1024,13 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 			os.makedirs(folder_path)
 		# --- Movie writer setup ---
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
-		movie_name = folder_path + f"moving_speckles_duration-{time/(1e-12):.0f}ps_resolution-{(time/time_resolution)/(1e-12):.2f}ps_{ff_lim*2}micron-grid.mp4"
+		duration_time_res	= f"moving_speckles_duration-{time/(1e-12):6.3f}ps_resolution-{(time/time_resolution)/(1e-12):3.6f}ps_"
+		grid_size			= f"{ff_lim*2}micron-grid_"
+		movie_name = folder_path + duration_time_res + grid_size
+		if do_isi:
+			isi_bandwidth	= f"bandwidth-{100*bandwidth/carrier_freq:5.2f}%"
+			movie_name		+= isi_bandwidth
+		movie_name += ".mp4"
 		with writer.saving(fig, movie_name, dpi=400):
 			util_loop_pms(int_beam_env, int_ff_env, near_field, timesteps, time, time_resolution, dpp,
 				 pcm, point_artist, fig, ax, area_nf, area_ff, beam_power, nf_x, nf_y, ff_x, ff_y,
@@ -1082,3 +1096,5 @@ def read_csv_file(file_loc):
 	x = df["x"]
 	y = df["y"]
 	return x, y
+# %%
+

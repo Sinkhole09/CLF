@@ -46,9 +46,10 @@ if __name__ == "__main__":
 	xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
 	int_beam_env_nf								= beam_envelope_supergaussian(alpha=np.log(0.5), sigma= (25.8*cm) / 2,
 																   cords=(x,y), N=24/2)									# Beam intensity envelope at lens
-	do_square = False
+	do_square	= False
+	do_sinc		= False
 	if do_square:
-		square_p	= 3
+		square_p	= 24
 		int_beam_env_nf			= beam_envelope_square(x, y, width=(25.8*cm) / 2, p=square_p, m=24)
 	int_beam_env_nf			= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
@@ -58,16 +59,18 @@ if __name__ == "__main__":
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
 		int_beam_env_nf, dpp_phase	= tuple(expand_grid([int_beam_env_nf, dpp_phase], scale_factor=scale_factor))
+#%%
 	int_beam_env = int_beam_env_nf
 	super_g_zero								= 358e-4*cm  # scale_factor*358e-4*cm if expandGrids else 
 	int_beam_env_ff								= beam_envelope_supergaussian(alpha=-1,cords=(xff,yff),
 																  super_g_x_zero=super_g_zero, super_g_y_zero=super_g_zero, N=4.77/2)	# same env as visrad and pyodin
-	if do_square:
-		int_beam_env_ff		= beam_envelope_square(xff, yff, width=358e-4*cm, p=square_p, m=4.77)
+	if do_sinc:
+		# int_beam_env_fff	= beam_envelope_sinc(x, y, width=super_g_zero*250 , power=3)
+		int_beam_env_ff	= beam_envelope_sinc(x, y, width=super_g_zero*250 , power=3)
+
 	int_beam_env_ff		= util_scale_int_env(int_beam_env_ff, area_ff, beam_power)
-#%%
-	# int_beam_env	= beam_envelope_square(xff, yff, width=358e-4 * cm, p=24, m=4.77)
-	# data_arrays		= [(xff, yff, int_beam_env), (xff, yff, int_beam_env_ff)]
+
+	# data_arrays		= [(x, y, int_beam_env_fff), (x, y, int_beam_env_ff)]
 	# fig				= util_plt_one_column_or_row(data_arrays=data_arrays, plt_attributes=None, one_col=False)
 	# plt.show(fig)
 #%%
@@ -86,13 +89,13 @@ if __name__ == "__main__":
 													time=ssd_duration, time_resolution=ssd_time_resolution,
 													x=x, y=y, write_to_file=False)
 # applying isi
-	do_isi					= True
+	do_isi					= False
 	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-	bandwidth				= 0.05 * carrier_frequency			# in radians, given as a percentage of central frequency
-	isi_duration			= 2e-13
+	bandwidth				= 0.0075 * carrier_frequency			# in radians, given as a percentage of central frequency
+	isi_duration			= 1e-12
 	isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 5
 	echelon_block_width		= 16								# pixels
-	bins					= 25	
+	bins					= 20	
 	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
 							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase, do_dpp=True,
 							time=isi_duration, time_resolution=isi_time_resolution, do_isi=do_isi, sf=scale_factor,
@@ -119,8 +122,8 @@ if __name__ == "__main__":
 	INTENSITY_COMPARISON_ISI, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
 									ssd_data_items=(int_ff_isi, isi_time_resolution, isi_duration),
-									do_DPP=True, do_PS=False, plot_ssd=do_isi, do_PS_SSD=False, ps_shift=1,
-									do_line=False, do_LogNorm=False, do_ideal=True, return_fig=do_isi, use_sciop=False, scale_from_max=scale_from_maximum)
+									do_DPP=True, do_PS=True, plot_ssd=do_isi, do_PS_SSD=True, ps_shift=1,
+									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=do_isi, use_sciop=False, scale_from_max=scale_from_maximum)
 	# t_type, varname, norm
 	# KICKER = make_plots([(int_beam_env_nf, 'ff', 'INT ENV NEW', 'linear', 'img'), x, y, xff, yff, 'linear', 15, 330, None, 'x', 'y'])
 	# ssd_duration, ssd_time_resolution = 1e-8, 50000
@@ -154,24 +157,36 @@ if __name__ == "__main__":
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	# carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-	# bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
-	# isi_duration			= 1e-12
-	# isi_time_resolution		= int(isi_duration // (1 / bandwidth))
-	# plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
-	# 				  nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-	# 				  time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
-	# 				  ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=2, show_com=False,
-	# 				  do_ssd=False, do_isi=True, carrier_freq=carrier_frequency, bandwidth=bandwidth,
-	# 				  echelon_block_width=echelon_block_width, scale_factor=scale_factor, bins=5)
+	do_pms=True
+	if do_pms:
+		carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
+		bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
+		isi_duration			= 5e-13
+		isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 50
+		echelon_block_width		= 16								# pixels
+		bins					= 20
+		plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
+						nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
+						time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
+						ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=2, show_com=False,
+						do_ssd=False, do_isi=True, carrier_freq=carrier_frequency, bandwidth=bandwidth,
+						echelon_block_width=echelon_block_width, scale_factor=scale_factor, bins=bins)
 # printing key results
-	if do_isi:	duration, resolution = isi_duration, isi_time_resolution
+	if do_isi:
+		duration, resolution = isi_duration, isi_time_resolution
+		with open("isi_parameter_scan.txt", "a") as file:
+			string_to_write	= f"isi_duration:\t{isi_duration/1e-12:6.3f}ps\t"
+			string_to_write	+= f"bandwidth:\t{100*bandwidth/carrier_frequency:6.3f}%\t"
+			string_to_write += f"echelon_block_width:{echelon_block_width:3d}pixels\t"
+			string_to_write	+= f"nonuniformity:{nonuniformity_ssd:6.2f}%, with PS:{nonuniform_DPP_and_PS:6.2f}%\n"
+			file.write(string_to_write)
 	else:		duration, resolution = ssd_duration, ssd_time_resolution
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
 				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
 				foc_len, Lambda,
-				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, resolution, duration, bandwidth / carrier_frequency]
+				nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd, resolution,
+				duration, bandwidth / carrier_frequency]
 	print_function(var_list)
 	plt.tight_layout()
 	plt.show()
