@@ -12,6 +12,8 @@ except:                 # defining some vars in a global scope
 	once       = False
 	twice      = 1
 	source_dir = 'C:/Users/shrut/OneDrive - Imperial College London/Documents/Finding Research/UKRI_STFC_CLF/'
+	if not os.path.exists(source_dir):
+		source_dir = "../"
 	fmat       = loadmat(                                           # read a MATLAB file
 		source_dir + 'for_shrut_250715/dppfilter_06_60_8col.mat',
 		struct_as_record=False,                                     # convert MATLAB structures into Python sytle classes with attributes
@@ -21,7 +23,7 @@ if twice <= 2:
 	twice+=1
 	# ip.magic("matplotlib") #run the magic command matplotlib. This configures matplotlib backend
 plt.close('all')
-if __name__ == "__main__":
+def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 # global variables
 	m, cm, um, cm2, um2  = 1, 1e-2, 1e-6, 1e-4, 1e-12	# unit conversions
 
@@ -89,13 +91,13 @@ if __name__ == "__main__":
 													time=ssd_duration, time_resolution=ssd_time_resolution,
 													x=x, y=y, write_to_file=False)
 # applying isi
-	do_isi					= False
-	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-	bandwidth				= 0.0075 * carrier_frequency			# in radians, given as a percentage of central frequency
-	isi_duration			= 1e-12
-	isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 5
-	echelon_block_width		= 16								# pixels
-	bins					= 20	
+	do_isi					= True
+	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)			# angular frequency of 351nm UV light
+	bandwidth				= bandwidth_frac * carrier_frequency	# in radians, given as a percentage of central frequency
+	# isi_duration			= 1e-12
+	isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 20
+	# echelon_block_width		= 32								# pixels
+	# bins					= 25	
 	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
 							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase, do_dpp=True,
 							time=isi_duration, time_resolution=isi_time_resolution, do_isi=do_isi, sf=scale_factor,
@@ -123,7 +125,7 @@ if __name__ == "__main__":
 									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
 									ssd_data_items=(int_ff_isi, isi_time_resolution, isi_duration),
 									do_DPP=True, do_PS=True, plot_ssd=do_isi, do_PS_SSD=True, ps_shift=1,
-									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=do_isi, use_sciop=False, scale_from_max=scale_from_maximum)
+									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=False, use_sciop=False, scale_from_max=scale_from_maximum)
 	# t_type, varname, norm
 	# KICKER = make_plots([(int_beam_env_nf, 'ff', 'INT ENV NEW', 'linear', 'img'), x, y, xff, yff, 'linear', 15, 330, None, 'x', 'y'])
 	# ssd_duration, ssd_time_resolution = 1e-8, 50000
@@ -157,30 +159,31 @@ if __name__ == "__main__":
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	do_pms=True
+	do_pms=False
 	if do_pms:
-		carrier_frequency		= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-		bandwidth				= 0.02 * carrier_frequency	# in radians, given as a percentage of central frequency
-		isi_duration			= 5e-13
-		isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 50
-		echelon_block_width		= 16								# pixels
-		bins					= 20
+		carrier_frequency	= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
+		bandwidth			= 0.015 * carrier_frequency	# in radians, given as a percentage of central frequency
+		duration			= 6e-13#6e-13	#seconds
+		time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 20
+		echelon_block_width	= 16								# pixels
+		bins				= 20
 		plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 						nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
-						time=isi_duration, time_resolution=isi_time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
-						ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=2, show_com=False,
+						time=duration, time_resolution=time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
+						ff_lim=400, img_norm='linear', do_cumulative=False, make_movie=True, fps=8, show_com=False,
 						do_ssd=False, do_isi=True, carrier_freq=carrier_frequency, bandwidth=bandwidth,
 						echelon_block_width=echelon_block_width, scale_factor=scale_factor, bins=bins)
 # printing key results
 	if do_isi:
 		duration, resolution = isi_duration, isi_time_resolution
 		with open("isi_parameter_scan.txt", "a") as file:
-			string_to_write	= f"isi_duration:\t{isi_duration/1e-12:6.3f}ps\t"
+			string_to_write	= f"duration:\t{isi_duration/1e-12:6.3f}ps\t"
 			string_to_write	+= f"bandwidth:\t{100*bandwidth/carrier_frequency:6.3f}%\t"
-			string_to_write += f"echelon_block_width:{echelon_block_width:3d}pixels\t"
+			string_to_write += f"block_width:{echelon_block_width:3d}pixels\t"
+			string_to_write	+= f"number of bins:\t{bins}\t"
 			string_to_write	+= f"nonuniformity:{nonuniformity_ssd:6.2f}%, with PS:{nonuniform_DPP_and_PS:6.2f}%\n"
 			file.write(string_to_write)
-	else:		duration, resolution = ssd_duration, ssd_time_resolution
+	else:duration, resolution = ssd_duration, ssd_time_resolution
 	var_list = [nx, dx, dxff, ny, dy, dyff,
 				area_nf, area_ff,
 				int_beam_env, int_ff, pwr_beam_env_tot, pwr_ff_tot,
@@ -189,7 +192,8 @@ if __name__ == "__main__":
 				duration, bandwidth / carrier_frequency]
 	print_function(var_list)
 	plt.tight_layout()
-	plt.show()
+	# plt.show()
 
-#%%
-#%%
+if __name__ == "__main__":
+	main(isi_duration=1e-12, bandwidth_frac=0.02, echelon_block_width=32, bins=35)
+	main(isi_duration=1e-12, bandwidth_frac=0.02, echelon_block_width=32, bins=40)

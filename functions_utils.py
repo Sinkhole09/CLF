@@ -134,7 +134,7 @@ def util_scale_int_env(int_beam_env, area, beam_power):
 	pwr_beam_env    	= int_beam_env * area				#power  envelope at lens
 	pwr_beam_env_tot	= np.sum(pwr_beam_env)
 	pwr_beam_env   		*= beam_power / pwr_beam_env_tot	#W
-	int_beam_env			= pwr_beam_env / area		#W/m^2
+	int_beam_env		= pwr_beam_env / area				#W/m^2
 	return int_beam_env
 def util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy):
 	dxff, dyff = foc_len * Lambda / (dx * nx), foc_len * Lambda / (dy * ny)         # both values are in meters. Limit of resolution due to diffraction
@@ -196,11 +196,14 @@ def electric_field_time_varying(carrier_freq, bandwidth, time, bins, total_nf_nt
 		bins									# number of spectral components
 		)
 	amplitudes		= util_1D_distributions(frequencies, total_nf_ntensity, mean=carrier_freq, sigma=bandwidth, form="gaussian")
-	electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
+	# electric_field	= np.zeros((bins,) + np.shape(time), dtype=complex)
 	for component, frequency in enumerate(frequencies):
-		electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
-		electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
-	return electric_field, frequencies
+		electric_field_component	= util_electric_field_component(amplitudes[component], frequency, time)
+		electric_field_component	*= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
+		yield electric_field_component, frequency
+		# electric_field[component, :, :]	= util_electric_field_component(amplitudes[component], frequency, time)
+		# electric_field[component, :, :] *= np.sqrt(int_beam_env) # giving the electric field a beam envelope.
+	# return electric_field, frequencies
 def util_echelon_time_delay(i, j, carrier_freq=None, coherence_time=None):
 	echelon_base		= (i + j) * (coherence_time)
 	t_cycle				= 2*np.pi/carrier_freq # time period of central wavelength. << coherence time
@@ -231,7 +234,7 @@ def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 	I_block, J_block	= i // block_size, j // block_size # performing element-wise integer(floor) division
 							# i and I_block have the same shape and same number of elements.
 	I_block, J_block	= I_block, J_block 
-	echelon_delays		= util_echelon_time_delay(I_block, J_block, coherence_time=tc, carrier_freq=carrier_freq)
+	echelon_delays		= util_echelon_time_delay(I_block[::-1], J_block[::-1], coherence_time=tc, carrier_freq=carrier_freq)
 	if sf is not None:
 		echelon_delays	= expand_grid(echelon_delays, scale_factor=sf)
 		rows *= sf
@@ -241,12 +244,15 @@ def util_perform_isi(int_beam_env, x, y, area_nf, area_ff, beam_power,
 	int_ff_isi			= np.zeros((rows, cols))
 	# int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
 	for timestep in tqdm(timesteps, desc="Applying isi"):	
-		electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
+		# electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
+		# 					carrier_freq, bandwidth,	
+		# 					time=echelon_delays + timestep, bins=bins,
+		# 					total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
+		E_ff_component	= np.zeros((rows, cols), dtype=complex)
+		for near_field, _ in electric_field_time_varying( # near field electric field component at each timestep
 							carrier_freq, bandwidth,	
 							time=echelon_delays + timestep, bins=bins,
-							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
-		E_ff_component	= np.zeros((rows, cols), dtype=complex)
-		for near_field in electric_fields: # each spectral component (num of spectral components is bins)
+							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env): # each spectral component (num of spectral components is bins)
 			if do_dpp:	# applying the phase plate
 				near_field *= dpp
 			E_ff				= util_compute_fft(near_field, False)
@@ -936,12 +942,11 @@ def util_for_plot_moving_speckles_isi(int_beam_env, x, y, area_nf, area_ff, beam
 	int_ff_isi			= np.zeros((rows, cols))
 	# int_beam_env, _ 	= normalize_2D_array(data_array=int_beam_env, x_range=x[:,0], y_range=y[0,:])
 	for idx, timestep in tqdm(enumerate(timesteps), desc="Applying isi"):	
-		electric_fields, _	= electric_field_time_varying( # near field electric field at each timestep
+		E_ff_component	= np.zeros((rows, cols), dtype=complex)
+		for near_field, _ in electric_field_time_varying( # near field electric field at each timestep
 							carrier_freq, bandwidth,	
 							time=echelon_delays + timestep, bins=bins,
-							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env)
-		E_ff_component	= np.zeros((rows, cols), dtype=complex)
-		for near_field in electric_fields: # each spectral component (num of spectral components is bins)
+							total_nf_ntensity=beam_power / area_nf, int_beam_env=int_beam_env): # each spectral component (num of spectral components is bins)
 			if do_dpp:	# applying the phase plate
 				near_field *= dpp
 			E_ff			= util_compute_fft(near_field, False)
@@ -1024,9 +1029,15 @@ def plot_moving_speckels(int_beam_env, int_ff_env, dpp_phase, nf_x, ff_x, nf_y, 
 			os.makedirs(folder_path)
 		# --- Movie writer setup ---
 		writer = FFMpegWriter(fps=fps, bitrate=1800)
+		if do_isi:
+			sim_type	= f"isi_"
+		elif do_ssd:
+			sim_type	= f"ssd_"
+		else:
+			sim_type	= f""
 		duration_time_res	= f"moving_speckles_duration-{time/(1e-12):6.3f}ps_resolution-{(time/time_resolution)/(1e-12):3.6f}ps_"
 		grid_size			= f"{ff_lim*2}micron-grid_"
-		movie_name = folder_path + duration_time_res + grid_size
+		movie_name = folder_path + sim_type + duration_time_res + grid_size
 		if do_isi:
 			isi_bandwidth	= f"bandwidth-{100*bandwidth/carrier_freq:5.2f}%"
 			movie_name		+= isi_bandwidth
