@@ -296,7 +296,7 @@ def perform_fft_normalize(int_beam_env, dpp_phase, beam_power, int_ideal_ff=None
 		near_field		*= dpp										# apply DPP phase modulation
 		int_ff_onlyDPP	= util_compute_fft(near_field)
 		int_ff_onlyDPP	= util_scale_int_env(int_ff_onlyDPP, area_ff, beam_power)
-	else: int_ff_onlyDPP = None
+	else: int_ff_onlyDPP, dpp = None, None
 	if do_ssd:
 		int_ff, sigma_rms_ssd_all, sigma_rms_ssd_ps_all	= util_perform_ssd(x, y, time, time_resolution,
 																	 near_field, int_ideal_ff, int_ff_onlyDPP,
@@ -417,7 +417,7 @@ def expand_grid(meshes, scale_factor=3):
 	for mesh in tqdm(meshes, desc="Expanding grids"):
 		rows, cols = np.shape(mesh)
 		scale = int(np.ceil(scale_factor))
-		exp_rows, exp_cols = rows*scale, cols*scale
+		exp_rows, exp_cols = int(np.ceil(rows*scale)), int(np.ceil(cols*scale))
 		expanded_mesh = np.zeros((exp_rows,exp_cols))
 		start = int(np.floor((exp_rows - rows) / 2))
 		end = exp_rows - start
@@ -498,7 +498,7 @@ def util_img_plot(fig, ax, x, y, data, attributes, show_cb=True):
 		- Applies logarithmic normalization if `norm="log"`.
 	"""
 	if attributes is None:
-		attributes = 'p'
+		attributes = 'plot_type'
 	(plot_type, 
 	xlabel,
 	ylabel,
@@ -604,7 +604,7 @@ def util_line_plot(ax, x, y, data, attributes, xnorm=None, do_scatter=False, do_
 		top.set_xscale(xnorm)
 		top.set_xlabel(top_label)
 	if show_legend: ax.legend()
-def util_plt_one_column_or_row(data_arrays, plt_attributes, one_col=True):
+def util_plt_one_column_or_row(data_arrays, plt_attributes=None, one_col=True):
 	if one_col: fig, ax = plt.subplots(nrows=len(data_arrays), ncols=1, figsize=(4,2*6))
 	else: 		fig, ax = plt.subplots(nrows=1, ncols=len(data_arrays), figsize=(2*6,4)) 
 	for pos, data in tqdm(enumerate(data_arrays), desc="Plotting"):

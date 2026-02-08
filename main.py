@@ -23,7 +23,10 @@ if twice <= 2:
 	twice+=1
 	# ip.magic("matplotlib") #run the magic command matplotlib. This configures matplotlib backend
 plt.close('all')
-def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
+def main(scale_factor, do_pms,
+		 do_isi, isi_duration, bandwidth_frac, echelon_block_width, bins, isi_fig,
+		 do_ssd, ssd_duration, ssd_timeres, ssd_fig,
+		 phase_fig):
 # global variables
 	m, cm, um, cm2, um2  = 1, 1e-2, 1e-6, 1e-4, 1e-12	# unit conversions
 
@@ -56,7 +59,7 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 	int_beam_env_nf			= util_scale_int_env(int_beam_env_nf, area_nf, beam_power)
 # expanding grids
 	expandGrids = True
-	scale_factor								= 2
+	# scale_factor								= 1
 	if expandGrids:
 		nx, dx, ny, dy, x1d, y1d, (x,y) 			= create_2D_grids(KesslerParms, scale_factor=scale_factor)
 		xff1d, dxff, xff, yff1d, dyff, yff, area_ff = util_calc_ff_parameters(foc_len, Lambda, nx, dx, ny, dy)
@@ -82,24 +85,24 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 	scale_from_maximum							= 1.1
 #%%
 # applying ssd
-	do_ssd				= False
-	ssd_time_resolution	= 100
-	ssd_duration		= 1e-10
+	# do_ssd				= True
+	ssd_time_resolution	= int(np.ceil(ssd_duration / ssd_timeres))
+	# ssd_duration		= 1e-10
 	ssd_timesteps		= np.array([i*(ssd_duration / ssd_time_resolution) for i in range(ssd_time_resolution)])
 	int_ff_ssd, _, _, sigma_rms_ssd, sigma_rms_ssd_ps = perform_fft_normalize(int_beam_env=int_beam_env, beam_power=beam_power,area_nf=area_nf, area_ff=area_ff,
 													dpp_phase=dpp_phase, do_dpp=True, do_ssd=do_ssd, scale_from_max=scale_from_maximum, int_ideal_ff=int_beam_env_ff,
 													time=ssd_duration, time_resolution=ssd_time_resolution,
 													x=x, y=y, write_to_file=False)
 # applying isi
-	do_isi					= True
-	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)			# angular frequency of 351nm UV light
+	# do_isi					= False
+	carrier_frequency		= 299729458 *2*np.pi/ (351e-9)			# angular frequency of 351nm UV light, 5.4e15 rad/s
 	bandwidth				= bandwidth_frac * carrier_frequency	# in radians, given as a percentage of central frequency
 	# isi_duration			= 1e-12
 	isi_time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 20
 	# echelon_block_width		= 32								# pixels
 	# bins					= 25	
 	int_ff_isi, _, _, _, _	= perform_fft_normalize(int_beam_env=int_beam_env, int_ideal_ff=int_beam_env_ff,
-							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase, do_dpp=True,
+							beam_power=beam_power,area_nf=area_nf, area_ff=area_ff, dpp_phase=dpp_phase, do_dpp=False,
 							time=isi_duration, time_resolution=isi_time_resolution, do_isi=do_isi, sf=scale_factor,
 							carrier_freq=carrier_frequency, bandwidth=bandwidth, echelon_block_width=echelon_block_width, bins=bins,
 							x=x, y=y)
@@ -111,23 +114,36 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 	# fig = make_big_figure(x, y, nx, ny, x1d, y1d, xff, yff, dxff, dyff,
 	# 				   dpp_phase, int_beam_env, int_ff, pwr_ff_tot, int_beam_env_nf,
 	# 				   cm, cm2, um)
-	# FIGURE1_PHASE_INTENSITY = intensity_phase_plots((x1d,dx), (xff1d,dxff), (y1d,dy), (yff1d,dyff), far_field_ideal, int_ff, dpp_phase)
-	
+	if phase_fig:
+		data_arrays = [
+			(xff, yff, int_beam_env_ff),
+			(x, y, dpp_phase),
+			(xff, yff, int_ff_dpp)
+		]
+		scale	= um
+		lims	= 400
+		plt_attributes = [
+			('img', None, None, None, lims, lims, scale, scale, "Ideal Intensity Distribution"),
+			('img', None, None, None, 15, 15, cm, cm, "Phase Plate"),
+			('img', None, None, None, lims, lims, scale, scale, "Speckle Pattern")
+		]
+		FIGURE1_PHASE_INTENSITY = util_plt_one_column_or_row(data_arrays=data_arrays,
+													   plt_attributes=plt_attributes,
+													   one_col=False)
+	else: FIGURE1_PHASE_INTENSITY = None
 	# plotting comparison with ssd
 	nonuniform_DPP, nonuniform_DPP_and_PS, nonuniformity_ssd = -1, -1, -1
 	INTENSITY_COMPARISON_SSD, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
 									ssd_data_items=(int_ff_ssd, ssd_time_resolution, ssd_duration),
 									do_DPP=True, do_PS=False, plot_ssd=do_ssd, do_PS_SSD=True, ps_shift=1,
-									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=do_ssd, use_sciop=False, scale_from_max=scale_from_maximum)
+									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=ssd_fig, use_sciop=False, scale_from_max=scale_from_maximum)
 	# plotting comparison with isi
 	INTENSITY_COMPARISON_ISI, nonuniform_DPP_and_PS, nonuniformity_ssd, nonuniform_DPP = intensity_plot_old(nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 									int_ff_ideal_raw=int_beam_env_ff, int_ff_raw=int_ff, ideal_int_nf=False,
 									ssd_data_items=(int_ff_isi, isi_time_resolution, isi_duration),
 									do_DPP=True, do_PS=True, plot_ssd=do_isi, do_PS_SSD=True, ps_shift=1,
-									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=False, use_sciop=False, scale_from_max=scale_from_maximum)
-	# t_type, varname, norm
-	# KICKER = make_plots([(int_beam_env_nf, 'ff', 'INT ENV NEW', 'linear', 'img'), x, y, xff, yff, 'linear', 15, 330, None, 'x', 'y'])
+									do_line=True, do_LogNorm=False, do_ideal=True, return_fig=isi_fig, use_sciop=False, scale_from_max=scale_from_maximum)
 	# ssd_duration, ssd_time_resolution = 1e-8, 50000
 	# ssd_timesteps		= np.array([i*(ssd_duration / ssd_time_resolution) for i in range(ssd_time_resolution)])
 	# df = pd.read_csv("./sigma_rms_ssd_5e4_timeres_1e-8_SSDduration_expandedGrids_3_scale_factor-OnePointOne.txt", sep="\t")
@@ -148,8 +164,6 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 	# 				 x_sigma_rms_ssd_ps*1e-9, None, x_sigma_rms_ssd_ps, ('--', 'blue', 'with PS digitised'), 'log', None, None, 1e-9, 'time (ns)', r'$\sigma_{\mathrm{rms}}$')
 	# 				 ]
 	# FIGURE = make_plots(collection, scatter=True, show_legend=False)
-	# test_data = test_func(xff, yff, omega=1e4)
-	# fig = make_plots(test_data)
 	# (x_noPS, y_noPS) = read_csv_file("../Graphs digitized/Figure3-Power soectra calculated from UVETP  imgages without PS-Measured.csv")
 	# POWER_SPEC_ONLY_SSD = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
@@ -159,14 +173,14 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 	# POWER_SPEC_SSD_PS = power_spectrum_against_wavenumber_plots(int_ff_ssd, xff, yff, norm='log', nbins=1000,
 	# 														   other_data=[(x_noPS, y_noPS)], k_min=2e-2 / um, k_cutoff=2.4,
 	# 														   show_untapered=False, do_avg=True, do_normalize=True, apply_hamming=True)
-	do_pms=False
+	# do_pms=False
 	if do_pms:
 		carrier_frequency	= 299729458 *2*np.pi/ (351e-9)		# angular frequency of 351nm UV light
-		bandwidth			= 0.015 * carrier_frequency	# in radians, given as a percentage of central frequency
-		duration			= 6e-13#6e-13	#seconds
-		time_resolution		= int(isi_duration // (2*np.pi / bandwidth)) * 20
-		echelon_block_width	= 16								# pixels
-		bins				= 20
+		bandwidth			= 0.005 * carrier_frequency	# in radians, given as a percentage of central frequency
+		duration			= 1e-12											# seconds
+		time_resolution		= int(duration // (2*np.pi / bandwidth)) * 20
+		echelon_block_width	= 32											# pixels
+		bins				= 30
 		plot_moving_speckels(int_beam_env=int_beam_env, int_ff_env=int_beam_env_ff, dpp_phase=dpp_phase,
 						nf_x=(x1d,dx), ff_x=(xff1d,dxff), nf_y=(y1d,dy), ff_y=(yff1d,dyff),
 						time=duration, time_resolution=time_resolution, area_nf=area_nf, area_ff=area_ff, beam_power=beam_power,
@@ -192,8 +206,17 @@ def main(isi_duration, bandwidth_frac, echelon_block_width, bins):
 				duration, bandwidth / carrier_frequency]
 	print_function(var_list)
 	plt.tight_layout()
-	# plt.show()
+	return FIGURE1_PHASE_INTENSITY, INTENSITY_COMPARISON_SSD, INTENSITY_COMPARISON_ISI
 
 if __name__ == "__main__":
-	main(isi_duration=1e-12, bandwidth_frac=0.02, echelon_block_width=32, bins=35)
-	main(isi_duration=1e-12, bandwidth_frac=0.02, echelon_block_width=32, bins=40)
+	# main(isi_duration=1e-12, bandwidth_frac=0.02, echelon_block_width=32, bins=35)
+	(
+		phase_fig,
+		ssd_fig,
+		isi_fig
+	) = main(scale_factor=1, do_pms=False,
+		do_isi=True, isi_duration=1.2e-12, bandwidth_frac=0.01, echelon_block_width=32, bins=30, isi_fig=True,
+		do_ssd=False, ssd_duration=1e-9, ssd_timeres=1e-9, ssd_fig=False,
+		phase_fig=False
+	)
+	plt.show()
